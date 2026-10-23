@@ -6,22 +6,60 @@ import Part
 
 V = App.Vector
 
-# Segments from PoC
-TWO_SEGMENTS = [
+TWO_SEGMENTS_GOOD = [
     Segment(V(0, 0, 0), V(40, 0, 0)),
     Segment(V(55, 15, 5), V(55, 55, 5)),
 ]
 
-COLINEAR_AWAY = [
+ARC_LENGTH_FAIL = [
     Segment(V(1, 0, 0), V(20, 0, 0)),
     Segment(V(-20, 0, 1), V(-1, 0, 1)),
 ]
 
-if __name__ == "__main__":
+MIN_RADIUS_PARTIAL_FAIL = [
+    Segment(V(1, 0, 0), V(50, 0, 0)),
+    Segment(V(90, 0, 11), V(40, 0, 10)),
+]
+
+if not getattr(App, "GuiUp", False):
+    raise SystemExit
+
+doc = App.ActiveDocument
+if doc is None:
+    doc = App.newDocument("WireCreatorTests")
+
+for obj in list(doc.Objects):
+    if obj.Name.startswith("TestPart_"):
+        doc.removeObject(obj.Name)
+
+tests = [
+    ("TwoSegmentsGood", TWO_SEGMENTS_GOOD),
+    ("ArcLengthFail", ARC_LENGTH_FAIL),
+    ("MinRadiusPartialFail", MIN_RADIUS_PARTIAL_FAIL),
+]
+
+for name, segs in tests:
     wc = WireCreator(min_bend_radius=12.0)
-    wire = wc.create_wire(COLINEAR_AWAY)
+    wire = wc.create_wire(segs)
     results = wc.check_wire()
-    print("Bad arcs:", len(results))
+    print(f"{name} bad arcs:", len(results))
     for r in results:
-        print(r["label"], "failed_tests:", r["failed_tests"], "radius:", r["radius"])
-    wc.visualize_bad_arcs(diameter=4.0)
+        print(r["label"], "failed_tests:", r["failed_tests"])
+
+    part = doc.addObject("App::Part", f"TestPart_{name}")
+    part.Label = f"TestPart_{name}"
+
+    wire_obj = doc.addObject("Part::Feature", f"Wire_{name}")
+    wire_obj.Shape = wire
+    part.addObject(wire_obj)
+
+    bad_objs = wc.visualize_bad_arcs(diameter=4.0)
+    for bad_obj in bad_objs:
+        try:
+            part.addObject(bad_obj)
+        except Exception:
+            pass
+
+doc.recompute()
+import FreeCADGui as Gui
+Gui.activeDocument().activeView().fitAll()
