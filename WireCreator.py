@@ -277,3 +277,41 @@ class WireCreator:
 
         document.recompute()
         return created
+
+
+    def make_cable(self, wire=None, diameter=4.0, use_frenet=True):
+        if wire is None:
+            wire = self.wire
+        if wire is None:
+            return None
+        try:
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            profile = Part.Wire([Part.Circle(start, tangent, diameter / 2.0).toShape()])
+            return wire.makePipeShell([profile], True, use_frenet, 0)
+        except Exception:
+            return None
+
+
+def add_make_cable():
+    pass
+
+
+# Ensure method exists
+import inspect
+if not hasattr(WireCreator, 'make_cable'):
+    def make_cable(self, wire=None, diameter=4.0, use_frenet=True):
+        if wire is None:
+            wire = self.wire
+        if wire is None:
+            return None
+        try:
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            profile = Part.Wire([Part.Circle(start, tangent, diameter / 2.0).toShape()])
+            return wire.makePipeShell([profile], True, use_frenet, 0)
+        except Exception:
+            return None
+    WireCreator.make_cable = make_cable

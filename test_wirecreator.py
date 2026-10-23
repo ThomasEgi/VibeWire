@@ -29,8 +29,11 @@ if doc is None:
     doc = App.newDocument("WireCreatorTests")
 
 for obj in list(doc.Objects):
-    if obj.Name.startswith("TestPart_"):
-        doc.removeObject(obj.Name)
+    try:
+        if obj.Name.startswith("TestPart_"):
+            doc.removeObject(obj.Name)
+    except Exception:
+        continue
 
 tests = [
     ("TwoSegmentsGood", TWO_SEGMENTS_GOOD),
@@ -52,6 +55,17 @@ for name, segs in tests:
     wire_obj = doc.addObject("Part::Feature", f"Wire_{name}")
     wire_obj.Shape = wire
     part.addObject(wire_obj)
+
+    cable = wc.make_cable(wire=wire, diameter=4.0)
+    if cable is not None:
+        cable_obj = doc.addObject("Part::Feature", f"Cable_{name}")
+        cable_obj.Shape = cable
+        try:
+            cable_obj.ViewObject.ShapeColor = (0.2, 0.45, 0.8)
+            cable_obj.ViewObject.Transparency = 20
+        except Exception:
+            pass
+        part.addObject(cable_obj)
 
     bad_objs = wc.visualize_bad_arcs(diameter=4.0)
     for bad_obj in bad_objs:
