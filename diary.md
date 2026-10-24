@@ -13,3 +13,9 @@
 - 2026-10-24: Added a wire name field. Empty names auto-fill as `wire_<start>_<end>` from the first segment start and last segment end reference labels; the group label follows the wire name.
 - 2026-10-24: M4 reminder: add an annotated drawing showing cable-only length, start/end connector lengths, and total length including connectors.
 - 2026-10-24: Counted connector linking as initially done: connector geometry is placed under the same App::Part as the referenced segment point; a dedicated attachment workflow remains future work.
+- 2026-10-24: Started M2: added Define Bundle tool, persistent WireBundle/WireBundleSegment objects with independent start/end point references, and pickable cylinder visualization. Shared point-reference pick helpers moved to PointReference.py.
+- 2026-10-24: Fixed bundle segment scope warnings by using PropertyLinkGlobal for Start/End (with migration for existing segments); references inside App::Part scopes now link cleanly.
+- 2026-10-24: Fixed bundle segments not appearing under the Bundle in the tree: view providers now set `self.Object` in `attach()` so `claimChildren()` works after proxy reload/restore.
+- 2026-10-24: Extended the wire tool so start/end picks accept bundle segment cylinders: start nodes run normal, end nodes run reversed. Wire routing now expands bundle nodes into route pieces and recomputes when bundle segment references move.
+- 2026-10-24: Picking a bundle segment in the wire tool now auto-fills the other node from the segment endpoint, so one click defines a run; start is normal and end is reversed. Legacy same-segment-twice rows resolve as a single normal run.
+- 2026-10-24: Fixed stale bundle/wire geometry when moving an enclosing App::Part: segments and cables now keep hidden ancestor-group dependencies (Dependencies) so outer Part moves trigger recompute.

@@ -6,6 +6,7 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 
+from .WireBundle import ancestor_groups, is_bundle_segment
 from .WireCreator import Segment, WireCreator
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
@@ -75,6 +76,17 @@ class WireCableProxy:
                 "Wire",
                 "Computed validation status",
             )
+        if "Dependencies" not in properties:
+            obj.addProperty(
+                "App::PropertyLinkListGlobal",
+                "Dependencies",
+                "Wire",
+                "Ancestor groups that affect the referenced placements",
+            )
+            try:
+                obj.setEditorMode("Dependencies", 2)
+            except Exception:
+                pass
         for name, description in (
             ("PathObject", "Object displaying the path"),
             ("BadRadiusObject", "Object displaying bends below the minimum radius"),
@@ -102,20 +114,51 @@ class WireCableProxy:
         for index in range(0, len(points), 2):
             start_obj = points[index]
             end_obj = points[index + 1]
+            number = index // 2 + 1
             if start_obj is None or end_obj is None:
                 self._set_error(
-                    obj, f"Segment {index // 2 + 1} is missing a start or end point."
+                    obj, f"Segment {number} is missing a start or end point."
                 )
                 return
-            start = start_obj.getGlobalPlacement().Base
-            end = end_obj.getGlobalPlacement().Base
-            if (end - start).Length < 1e-9:
-                self._set_error(
-                    obj,
-                    f"Segment {index // 2 + 1} has identical start and end points.",
-                )
+
+            start_is_bundle = is_bundle_segment(start_obj)
+            end_is_bundle = is_bundle_segment(end_obj)
+            if start_is_bundle and end_is_bundle and start_obj is end_obj:
+                try:
+                    bundle_start, bundle_end = self._bundle_points(start_obj)
+                    self._append_segment(segments, bundle_start, bundle_end)
+                except ValueError as error:
+                    self._set_error(obj, str(error))
+                    return
+                continue
+
+            try:
+                if start_is_bundle:
+                    bundle_start, bundle_end = self._bundle_points(start_obj)
+                    self._append_segment(segments, bundle_start, bundle_end)
+                    connection = bundle_end
+                else:
+                    connection = start_obj.getGlobalPlacement().Base
+
+                if end_is_bundle:
+                    bundle_start, bundle_end = self._bundle_points(end_obj)
+                    if not start_is_bundle:
+                        self._append_segment(segments, connection, bundle_end)
+                    self._append_segment(segments, bundle_end, bundle_start)
+                else:
+                    end_point = end_obj.getGlobalPlacement().Base
+                    if not start_is_bundle and (end_point - connection).Length < 1e-9:
+                        raise ValueError(
+                            f"Segment {number} has identical start and end points."
+                        )
+                    self._append_segment(segments, connection, end_point)
+            except ValueError as error:
+                self._set_error(obj, str(error))
                 return
-            segments.append(Segment(start, end))
+
+        if not segments:
+            self._set_error(obj, "The route does not contain any segments.")
+            return
 
         creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
         try:
@@ -160,6 +203,27 @@ class WireCableProxy:
         obj.Status = status
 
     @staticmethod
+    def _bundle_points(bundle_segment):
+        start_obj = bundle_segment.Start
+        end_obj = bundle_segment.End
+        if start_obj is None or end_obj is None:
+            raise ValueError(
+                f"Bundle segment {bundle_segment.Label} needs start and end references."
+            )
+        start = start_obj.getGlobalPlacement().Base
+        end = end_obj.getGlobalPlacement().Base
+        if (end - start).Length < 1e-9:
+            raise ValueError(
+                f"Bundle segment {bundle_segment.Label} has identical start and end points."
+            )
+        return start, end
+
+    @staticmethod
+    def _append_segment(segments, start, end):
+        if (end - start).Length >= 1e-9:
+            segments.append(Segment(start, end))
+
+    @staticmethod
     def _set_bad_shapes(obj, radius_shapes, length_shapes):
         for link, shapes in (
             (obj.BadRadiusObject, radius_shapes),
@@ -191,6 +255,7 @@ class WireCableProxy:
 
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
+        update_cable_dependencies(obj)
         _remove_legacy_container(obj)
 
 
@@ -203,6 +268,9 @@ class ViewProviderWireCable:
 
     def getIcon(self):
         return ICON
+
+    def attach(self, vobj):
+        self.Object = vobj.Object
 
     def setEdit(self, vobj, mode):
         if mode != 0:
@@ -287,6 +355,22 @@ class ViewProviderWireCable:
 
     def loads(self, state):
         return None
+
+
+def update_cable_dependencies(cable):
+    """Depend on ancestor groups of direct point references."""
+    dependencies = []
+    seen = set()
+    for node in cable.Points:
+        if node is None or is_bundle_segment(node):
+            continue
+        for group in ancestor_groups(node):
+            if group.Name in seen:
+                continue
+            seen.add(group.Name)
+            dependencies.append(group)
+    if "Dependencies" in cable.PropertiesList:
+        cable.Dependencies = dependencies
 
 
 def _is_valid(obj, document):
@@ -403,6 +487,7 @@ def create_wire_cable(
             pass
 
     cable.Points = list(points)
+    update_cable_dependencies(cable)
     cable.Diameter = diameter
     cable.MinBendRadius = min_bend_radius
     cable.BuildCable = build_cable

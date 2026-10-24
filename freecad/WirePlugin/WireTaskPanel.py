@@ -6,63 +6,20 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
+from .WireBundle import is_bundle_segment
 from .WireCable import (
     create_wire_cable,
     ensure_support_objects,
     rename_cable,
+    update_cable_dependencies,
+)
+from .PointReference import (
+    POINT_REFERENCE_TYPES,
+    ClickableLabel,
+    PickObserver,
+    PointReferenceGate,
 )
 from .WireCreator import Segment
-
-POINT_REFERENCE_TYPES = (
-    "Part::LocalCoordinateSystem",
-    "PartDesign::CoordinateSystem",
-    "App::Origin",
-    "App::Part",
-    "PartDesign::Body",
-)
-
-
-class _ClickableLabel(QtGui.QLabel):
-    """Label that emits clicked when pressed."""
-
-    clicked = QtCore.Signal()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
-
-
-class _PointReferenceGate:
-    """Selection gate that only allows objects usable as a point reference."""
-
-    def allow(self, document, obj, subelement):
-        if isinstance(document, str):
-            document = App.getDocument(document)
-        if document is None:
-            return False
-        if isinstance(obj, str):
-            obj = document.getObject(obj)
-        return obj is not None and obj.TypeId in POINT_REFERENCE_TYPES
-
-
-class _PickObserver:
-    """Selection observer used while waiting for a point reference pick."""
-
-    def __init__(self, callback):
-        self._callback = callback
-
-    def addSelection(self, doc, obj, sub, pnt=None):
-        self._callback(doc, obj, sub)
-
-    def removeSelection(self, *args):
-        pass
-
-    def setSelection(self, *args):
-        pass
-
-    def clearSelection(self, *args):
-        pass
 
 
 class WireTaskPanel:
@@ -90,9 +47,11 @@ class WireTaskPanel:
         layout.addLayout(name_form)
 
         hint = QtGui.QLabel(
-            "Add segments and pick a point reference for each start and end "
-            "point: a Part/PartDesign coordinate system, a Std_Part origin, "
-            "or a Part/Body."
+            "Add segments and pick a start/end reference. Pick a point "
+            "reference (coordinate system, Std_Part origin, Part/Body) or a "
+            "bundle segment cylinder. Picking a bundle segment collects its "
+            "other endpoint automatically; as start it runs normal, as end it "
+            "runs reversed."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -113,9 +72,9 @@ class WireTaskPanel:
 
         detail_group = QtGui.QGroupBox("Selected Segment")
         detail_layout = QtGui.QFormLayout(detail_group)
-        self.start_label = _ClickableLabel("(not set)")
+        self.start_label = ClickableLabel("(not set)")
         self.btn_pick_start = QtGui.QPushButton("Pick Start")
-        self.end_label = _ClickableLabel("(not set)")
+        self.end_label = ClickableLabel("(not set)")
         self.btn_pick_end = QtGui.QPushButton("Pick End")
         detail_layout.addRow("Start:", self._label_with_button(self.start_label, self.btn_pick_start))
         detail_layout.addRow("End:", self._label_with_button(self.end_label, self.btn_pick_end))
@@ -188,6 +147,7 @@ class WireTaskPanel:
                 {
                     "start": (document.Name, start.Name),
                     "end": (document.Name, end.Name),
+                    "auto_field": None,
                 }
             )
 
@@ -220,7 +180,7 @@ class WireTaskPanel:
         return True
 
     def add_segment(self):
-        self.segments.append({"start": None, "end": None})
+        self.segments.append({"start": None, "end": None, "auto_field": None})
         self._update_list()
         self.segment_list.setCurrentRow(len(self.segments) - 1)
 
@@ -263,13 +223,15 @@ class WireTaskPanel:
         self._picking = (row, field)
         self.status_label.setStyleSheet("")
         self.status_label.setText(
-            "Select a point reference in the 3D view or tree for segment "
-            f"{row + 1} {field}."
+            "Select a point reference or bundle segment in the 3D view or "
+            f"tree for segment {row + 1} {field}."
         )
         Gui.Selection.clearSelection()
-        Gui.Selection.addSelectionGate(_PointReferenceGate())
+        Gui.Selection.addSelectionGate(
+            PointReferenceGate(allow_bundle_segments=True)
+        )
         self._gate_active = True
-        self._pick_observer = _PickObserver(self._on_picked)
+        self._pick_observer = PickObserver(self._on_picked)
         Gui.Selection.addObserver(self._pick_observer)
 
     def _on_picked(self, doc_name, obj_name, subelement):
@@ -286,7 +248,9 @@ class WireTaskPanel:
             obj = document.getObject(obj_name)
         else:
             obj = obj_name
-        if obj is None or obj.TypeId not in POINT_REFERENCE_TYPES:
+        if obj is None:
+            return
+        if obj.TypeId not in POINT_REFERENCE_TYPES and not is_bundle_segment(obj):
             return
 
         row, field = self._picking
@@ -294,7 +258,24 @@ class WireTaskPanel:
         if row >= len(self.segments):
             return
 
-        self.segments[row][field] = (document.Name, obj.Name)
+        entry = self.segments[row]
+        other_field = "end" if field == "start" else "start"
+        other_was_auto = entry.get("auto_field") == other_field
+        entry[field] = (document.Name, obj.Name)
+        if entry.get("auto_field") == field:
+            entry["auto_field"] = None
+
+        if is_bundle_segment(obj) and (
+            entry[other_field] is None or other_was_auto
+        ):
+            endpoint = obj.End
+            if endpoint is not None:
+                entry[other_field] = (document.Name, endpoint.Name)
+                entry["auto_field"] = other_field
+                self.status_label.setStyleSheet("")
+                self.status_label.setText(
+                    "Bundle segment endpoints collected automatically."
+                )
         self._update_list()
         self.segment_list.setCurrentRow(row)
 
@@ -336,10 +317,16 @@ class WireTaskPanel:
             return None
         return document.getObject(ref[1])
 
-    def _point_text(self, ref):
+    def _point_text(self, ref, reversed_bundle=False):
         obj = self._resolve(ref)
         if obj is None:
             return "(not set)" if ref is None else "(missing)"
+        if is_bundle_segment(obj):
+            start = obj.Start.Label if obj.Start else "?"
+            end = obj.End.Label if obj.End else "?"
+            if reversed_bundle:
+                return f"{obj.Label} ({end} -> {start}) [reversed]"
+            return f"{obj.Label} ({start} -> {end})"
         point = obj.getGlobalPlacement().Base
         return f"{obj.Label} ({point.x:.2f}, {point.y:.2f}, {point.z:.2f})"
 
@@ -349,7 +336,7 @@ class WireTaskPanel:
         self.segment_list.clear()
         for index, segment in enumerate(self.segments):
             start = self._point_text(segment["start"])
-            end = self._point_text(segment["end"])
+            end = self._point_text(segment["end"], reversed_bundle=True)
             self.segment_list.addItem(f"{index + 1}: {start} -> {end}")
         if 0 <= current < len(self.segments):
             self.segment_list.setCurrentRow(current)
@@ -358,7 +345,11 @@ class WireTaskPanel:
         self._update_name_placeholder()
 
     def _name_component(self, obj):
-        text = obj.Label or obj.Name or "point"
+        if is_bundle_segment(obj):
+            point = obj.Start
+            text = point.Label if point else (obj.Label or obj.Name or "bundle")
+        else:
+            text = obj.Label or obj.Name or "point"
         component = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
         return component or "point"
 
@@ -406,15 +397,17 @@ class WireTaskPanel:
 
         if not has_segment:
             self._update_point_label(self.start_label, None)
-            self._update_point_label(self.end_label, None)
+            self._update_point_label(self.end_label, None, reversed_bundle=True)
             return
 
         segment = self.segments[row]
         self._update_point_label(self.start_label, segment["start"])
-        self._update_point_label(self.end_label, segment["end"])
+        self._update_point_label(
+            self.end_label, segment["end"], reversed_bundle=True
+        )
 
-    def _update_point_label(self, label, ref):
-        label.setText(self._point_text(ref))
+    def _update_point_label(self, label, ref, reversed_bundle=False):
+        label.setText(self._point_text(ref, reversed_bundle))
         if self._resolve(ref) is None:
             label.setCursor(QtCore.Qt.ArrowCursor)
             label.setStyleSheet("")
@@ -422,7 +415,9 @@ class WireTaskPanel:
         else:
             label.setCursor(QtCore.Qt.PointingHandCursor)
             label.setStyleSheet("color: #1a5fb4; text-decoration: underline;")
-            label.setToolTip("Click to select this point reference in the scene")
+            label.setToolTip(
+                "Click to select this point reference or bundle segment in the scene"
+            )
 
     def select_point(self, field):
         row = self._current_row()
@@ -453,7 +448,7 @@ class WireTaskPanel:
         obj = self._resolve(ref)
         if obj is None:
             raise ValueError(
-                f"Segment {index + 1} needs a {role} point reference."
+                f"Segment {index + 1} needs a {role} reference."
             )
         return obj
 
@@ -468,16 +463,16 @@ class WireTaskPanel:
             end_obj = self._reference_object(segment["end"], "end", index)
             if start_obj.Document is not document or end_obj.Document is not document:
                 raise ValueError(
-                    "All point references must belong to the same document "
-                    "as the cable."
+                    "All references must belong to the same document as the cable."
                 )
-            start = start_obj.getGlobalPlacement().Base
-            end = end_obj.getGlobalPlacement().Base
-            if (end - start).Length < 1e-9:
-                raise ValueError(
-                    f"Segment {index + 1} has identical start and end points."
-                )
-            segments.append(Segment(start, end))
+            if not is_bundle_segment(start_obj) and not is_bundle_segment(end_obj):
+                start = start_obj.getGlobalPlacement().Base
+                end = end_obj.getGlobalPlacement().Base
+                if (end - start).Length < 1e-9:
+                    raise ValueError(
+                        f"Segment {index + 1} has identical start and end points."
+                    )
+                segments.append(Segment(start, end))
             links.extend([start_obj, end_obj])
         return segments, links
 
@@ -530,6 +525,7 @@ class WireTaskPanel:
             if self._cable_is_usable(document):
                 ensure_support_objects(self.cable)
                 self.cable.Points = links
+                update_cable_dependencies(self.cable)
                 self.cable.Diameter = diameter
                 self.cable.MinBendRadius = min_bend_radius
                 self.cable.BuildCable = make_cable

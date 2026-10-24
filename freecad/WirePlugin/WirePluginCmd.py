@@ -5,6 +5,7 @@ import os
 import FreeCADGui as Gui
 from PySide import QtGui
 
+from freecad.WirePlugin.WireBundleTaskPanel import WireBundleTaskPanel
 from freecad.WirePlugin.WireTaskPanel import WireTaskPanel
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
@@ -29,3 +30,24 @@ class CreateWireCommand:
 
 
 Gui.addCommand("WirePlugin_CreateWire", CreateWireCommand())
+
+
+class DefineBundleCommand:
+    def GetResources(self):
+        return {
+            "Pixmap": ICON,
+            "MenuText": "Define Bundle",
+            "ToolTip": "Define independent straight bundle segments",
+        }
+
+    def Activated(self):
+        try:
+            Gui.Control.showDialog(WireBundleTaskPanel())
+        except Exception as error:
+            QtGui.QMessageBox.critical(None, "WirePlugin", str(error))
+
+    def IsActive(self):
+        return True
+
+
+Gui.addCommand("WirePlugin_DefineBundle", DefineBundleCommand())

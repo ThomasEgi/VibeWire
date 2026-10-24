@@ -107,30 +107,46 @@ Goal: Get the core model working for a single cable before handling bundles/mult
 Goal: Handle bundles of cables routed together, with simple arrangement and orientation control.
 
 ### Requirements
-- [ ] **Bundle object**: Create a bundle Document Object that contains/represents multiple cables
-- [ ] **Bundle routing**: Route bundles along a chain of segments (like cables)
-- [ ] **Place cables side by side**: For each segment, arrange cables next to each other with a definable gap size
-- [ ] **Consistent gaps**: Gaps between cables must be consistent even if cables have different diameters
-- [ ] **Cable ordering**: For each segment, cables can be arranged in order and that order must be editable
-- [ ] **Per-segment orientation**: Each bundle segment has a position/axis and orientation along the segment axis; users can rotate the arrangement as specified along that axis
+- [ ] **Bundle object**: Create a bundle Document Object containing member cables and a collection of independent straight bundle segments
+- [x] **Bundle segments**: Define every bundle segment by start/end point references (same reference types as M1); bundle segments have no bi-arcs or physical interconnections and each provides a pickable cylindrical display geometry
+- [x] **Mixed wire routing**: Give each cable an ordered route that can mix precise point-to-point segments (M1 style) with bundle-segment references; a bundle segment picked as start runs normal, picked as end runs reversed, and routes may use subsets of the bundle and branch in/out
+- [x] **Pickable bundle segments**: Pick bundle segment cylinders for a wire segment start or end instead of entering point endpoints; picking auto-fills the other node from the bundle segment (start runs normal, end runs reversed)
+- [x] **Wire-level bi-arcs**: Generate transitions between consecutive route pieces with the M1 bi-arc solver; the bundle itself remains straight segments only
+- [ ] **Place cables side by side**: For each bundle segment, arrange routed cables next to each other with a definable gap
+- [ ] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters
+- [ ] **Cable ordering**: For each segment, cable order is editable
+- [ ] **Per-segment orientation**: Rotation of the cable arrangement about the bundle segment axis is user-definable per segment
+- [x] **Bundle segment display**: Show pickable cylinder geometry for each bundle segment (with a configurable preview radius)
+- [ ] **Arrangement display**: Show the per-segment cable order/arrangement once cables are routed
+- [ ] **Recompute**: Update affected cable routes/geometry when segment point references, route direction, arrangement, orientation or cable diameters change
 
 ### Technical Details (M2)
-- **Bundle object**: `WireBundle` Document Object with references to member cables and bundle segment chain
-- **Bundle segments**: Bundle has its own ordered segment chain (start/end points). Individual cables follow/are placed relative to bundle path.
-- **Arrangement**: For a given bundle segment, compute local cross-section frame (origin on bundle path, axes perpendicular to segment axis). Place each cable in that cross-section based on diameter + gap to neighbors to maintain consistent gap between different diameters.
-- **Ordering**: Maintain an ordered list of cables per segment (or per bundle with per-segment overrides). Support reordering in UI.
-- **Orientation**: Store orientation angle/rotation about the bundle segment axis for the arrangement on each segment. UI to rotate the cable order/arrangement as specified by the user.
-- **Geometry**: Generate geometry for each cable placed in the arranged positions along bundle segments (respecting bi-arcs/transitions)
-- **Integration**: Work with PartDesign/Assembly, use FreeCAD positioning/gizmos where applicable
+- **Bundle object**: `WireBundle` Document Object with a `Cables` link list and a `Segments` link list of `WireBundleSegment` objects. It does not build a connected path.
+- **Bundle segments**: Each `WireBundleSegment` is an independent straight segment defined by `Start` and `End` point references using the M1 point-reference types. It has no link to neighbouring segments and therefore no bi-arcs. Each segment also exposes a pickable cylinder aligned with its axis for 3D selection; its radius can be a configurable preview or derived from the per-segment arrangement.
+- **Wire route (current)**: Each wire row has a start and end node; either node may be a point reference or a `WireBundleSegment`. A bundle segment picked as start contributes its normal run (`Start` -> `End`); picked as end it contributes its reversed run (`End` -> `Start`). Mixed rows expand into route pieces (bundle runs plus direct connections), and a route containing only point nodes is the M1 standalone cable.
+- **Picking and direction**: The wire panel start/end pickers accept point references and bundle segment cylinders. Picking a bundle cylinder into an empty start/end slot auto-fills the other node with the segment's `End` reference, so one pick defines a complete run: start uses the segment normal (`Start` -> `End`), end uses it reversed (`End` -> `Start`). If both slots are already set, they form a mixed route between the chosen nodes; explicit per-entry direction toggles can be added later.
+- **Segment frame**: For a segment axis `u = normalize(end - start)`, construct a stable perpendicular basis (`n0`, `b0`) with a fallback when `u` is parallel to the global Z axis, then apply the segment's per-segment orientation/roll. The cable arrangement is placed in that cross-section.
+- **Arrangement**: For each segment, build the ordered list of routed cables (global order plus per-segment overrides). Place cable centres along the arrangement axis using edge-to-edge spacing `r_i + gap + r_(i+1)`, where `r_i` is the cable radius. Centre the row on the bundle segment axis (multiple rows can be a later extension).
+- **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. Normal direction: `start = segment.start + offset`, `end = segment.end + offset`, tangent `+u`. Reversed direction: `start = segment.end + offset`, `end = segment.start + offset`, tangent `-u`.
+- **Bi-arc generation**: Resolve every route row into ordered route pieces (bundle runs plus direct connections). Feed the pieces to the M1 `WireCreator`, which inserts bi-arcs between consecutive pieces; gaps and reversals are handled at cable level, not bundle level.
+- **Branching**: A cable may route over any ordered subset of bundle segments. Per-segment member lists are derived from the cables' routes, so cables can join or leave the bundle between segments without changing the bundle segment definitions.
+- **Geometry/recompute**: Bundle segment point references, arrangement order, orientation, gap and cable dimensions create dependencies. Bundle segments and cables also keep hidden ancestor-group dependencies so moving an enclosing `App::Part`/Body recomputes them; recomputing the document rebuilds affected cable paths, sweeps and bend/length validations from the current segment placements and routes.
+- **UI**: Bundle editor for adding/removing segments, picking start/end references, setting gap and per-segment orientation/order. Cable route editor for adding point-pair entries or picking bundle segment cylinders, with reordering and branching; direction is implied by the start/end slot (start normal, end reversed). Display pickable segment cylinders and the per-segment arrangement.
+- **Integration**: Use the same point-reference model as M1 so bundle segments can be driven by PartDesign/Assembly geometry and standard placement gizmos.
 
 ### Acceptance Criteria
-- Can create a bundle containing multiple cables
-- Bundle follows a chain of segments with start/end points
+- Can create a bundle containing multiple independent straight segments
+- Bundle segments are defined by start/end references and have no bundle-level bi-arcs or forced interconnections
+- Can assign a cable to an ordered mixed route of direct segments and bundle segments with `Normal`/`Reversed` directions
+- Can pick a bundle segment cylinder as a wire start (normal) or end (reversed), with the other node auto-filled from the segment
+- Direct precise segments and bundle segments can be mixed in the same cable route
+- Cable routes can use subsets of the bundle and branch in/out
+- Bi-arcs are generated at the cable level between consecutive route pieces, including direct/bundle transitions
 - Cables are placed side by side on each segment with a definable gap
-- Gap is consistent between cables regardless of different cable diameters
+- Gap is consistent between cables regardless of different diameters
 - Cable order per segment is editable
-- Bundle segment orientation (rotation about segment axis) can be set and changed by user
-- Arrangement updates correctly when segment order/orientation/gap/cable diameters change
+- Per-segment arrangement orientation can be set and changed
+- Updating segment references, routes, order, orientation, gap or diameters recomputes affected cable geometry
 
 ## Future Milestones (High-level)
 - **M3**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)

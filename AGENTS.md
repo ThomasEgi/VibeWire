@@ -48,20 +48,35 @@ The module provides a `WireCreator` class with these main operations:
 
 ### Cable Object
 - `WireCable.py` defines a persistent `Part::FeaturePython` cable object
-- `Points` (`App::PropertyLinkList`) stores ordered start/end point references (coordinate systems, Std_Part origins, Parts/Bodies)
+- `Points` (`App::PropertyLinkList`) stores ordered start/end node references; nodes can be point references (coordinate systems, Std_Part origins, Parts/Bodies) or `WireBundleSegment` objects
+- A bundle segment in a start slot contributes its normal run (`Start` -> `End`); in an end slot it contributes its reversed run (`End` -> `Start`). Picking a bundle segment into an empty slot auto-fills the other node from the segment's `End` reference. `WireCable.execute()` expands each pair into route pieces before calling `WireCreator`
 - `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
 - `Diameter`, `MinBendRadius`, `Length`, `MinimumRadius`, `Status` are stored as properties
 - `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
 - Linked objects create dependencies, so a document recompute updates moved inputs
 - Double-click opens `WireTaskPanel` prefilled with the stored route; edits update the same object
 - Path and bad-arc helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`
+- `Dependencies` (`App::PropertyLinkListGlobal`) stores ancestor GeoFeatureGroups of the point references so moving an enclosing `App::Part`/Body recomputes the cable
 - Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
+
+### Bundle Object
+- `WireBundle.py` defines `WireBundle` (`App::FeaturePython`) with `Segments` and `Cables` link lists
+- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references and a `Radius`
+- Use `App::PropertyLinkGlobal` for segment start/end references; normal `App::PropertyLink` triggers FreeCAD scope warnings when the referenced objects live inside an `App::Part`
+- Segment `execute()` builds a pickable cylinder from the current point placements
+- Bundle segments are independent: no bundle-level bi-arcs or segment-to-segment links
+- Do not link a segment back to its bundle; the bundle links segments (`Segments`) and the view provider claims them as children
+- Implement `attach()` on custom view providers and set `self.Object`; `claimChildren()` can be called after a reload without `__init__`
+- `WireBundleSegment` also has hidden `Dependencies` (ancestor groups); update them when segment endpoints change so outer Part moves recompute the segment
+- Double-click the bundle to edit its segments; deleting the bundle removes its segments (deferred cleanup)
 
 ### Plugin Structure
 - Workbench: `WirePluginWorkbench` (registered via `FreeCADGui.addWorkbench()`)
-- Toolbar command: `WirePlugin_CreateWire`
+- Toolbar commands: `WirePlugin_CreateWire` (cable) and `WirePlugin_DefineBundle` (bundle segments)
 - `WireTaskPanel` provides the segment/point-reference editor and geometry controls
 - `WireCable` provides the persistent cable object and double-click editing
+- `WireBundle` provides the bundle container and independent straight segment objects
+- `WireBundleTaskPanel` defines bundle segments; `PointReference.py` holds shared point-pick helpers
 - Installed in `freecad/WirePlugin/` inside the addon
 
 ## Setup Requirements
@@ -121,6 +136,9 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/WireCable.py` - persistent cable object, dependency recompute, ViewProvider
 - `freecad/WirePlugin/WireTaskPanel.py` - segment editor and geometry controls
 - `freecad/WirePlugin/WirePluginCmd.py` - toolbar commands
+- `freecad/WirePlugin/WireBundle.py` - bundle/segment objects and cylinder visualization
+- `freecad/WirePlugin/WireBundleTaskPanel.py` - bundle segment editor
+- `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers
 - `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
 - `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets
 - `plan.md` - project milestones and terminology
