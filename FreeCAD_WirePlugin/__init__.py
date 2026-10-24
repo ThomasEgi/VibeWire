@@ -1,0 +1,1 @@
+"""FreeCAD Wire Plugin."""
