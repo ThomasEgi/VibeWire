@@ -22,3 +22,4 @@
 - 2026-10-24: Added harness-level lane layout: WireHarness stores cable order, gap and per-segment offsets; cables link the harness, read their lane offset, and touch the harness when route/diameter changes. Verifies parallel routing with mixed diameters and reversed runs.
 - 2026-10-24: Added per-bundle-segment rotation (Orientation) applied to the harness lane axis, and migrated cable Points to PropertyLinkListGlobal to eliminate App::Part scope warnings.
 - 2026-10-24: Composed bundle-segment orientation from the driving reference coordinate systems: lane axis now uses the averaged start/end reference frames plus the manual segment roll.
+- 2026-10-24: Added circular/linear harness patterns with 2D lane offsets. The harness stores global offset vectors in Layout; circular places cables at equal angles on a clearance-based ring.

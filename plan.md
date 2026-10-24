@@ -112,12 +112,10 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - [x] **Mixed wire routing**: Give each cable an ordered route that can mix precise point-to-point segments (M1 style) with bundle-segment references; a bundle segment picked as start runs normal, picked as end runs reversed, and routes may use subsets of the bundle and branch in/out
 - [x] **Pickable bundle segments**: Pick bundle segment cylinders for a wire segment start or end instead of entering point endpoints; picking auto-fills the other node from the bundle segment (start runs normal, end runs reversed)
 - [x] **Wire-level bi-arcs**: Generate transitions between consecutive route pieces with the M1 bi-arc solver; the bundle itself remains straight segments only
-- [x] **Place cables side by side**: For each bundle segment, arrange routed cables next to each other with a definable gap
-- [x] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters
-- [ ] **Cable ordering**: For each segment, cable order is editable
+- [x] **Place cables side by side**: For each bundle segment, arrange routed cables with a definable gap using a linear or circular cross-section pattern
+- [x] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters in the linear pattern; the circular pattern uses a clearance-based ring radius
 - [x] **Per-segment orientation**: Rotation of the cable arrangement about the bundle segment axis is user-definable per segment
 - [x] **Bundle segment display**: Show pickable cylinder geometry for each bundle segment (with a configurable preview radius)
-- [ ] **Arrangement display**: Show the per-segment cable order/arrangement once cables are routed
 - [x] **Recompute**: Update affected cable routes/geometry when segment point references, route direction, cable order, gap or cable diameters change
 
 ### Technical Details (M2)
@@ -126,12 +124,12 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - **Wire route (current)**: Each wire row has a start and end node; either node may be a point reference or a `WireBundleSegment`. A bundle segment picked as start contributes its normal run (`Start` -> `End`); picked as end it contributes its reversed run (`End` -> `Start`). Mixed rows expand into route pieces (bundle runs plus direct connections), and a route containing only point nodes is the M1 standalone cable.
 - **Picking and direction**: The wire panel start/end pickers accept point references and bundle segment cylinders. Picking a bundle cylinder into an empty start/end slot auto-fills the other node with the segment's `End` reference, so one pick defines a complete run: start uses the segment normal (`Start` -> `End`), end uses it reversed (`End` -> `Start`). If both slots are already set, they form a mixed route between the chosen nodes; explicit per-entry direction toggles can be added later.
 - **Segment frame**: For a segment axis `u = normalize(end - start)`, derive a lateral axis from the averaged global coordinate frames of the `Start`/`End` references (local Z, then Y/X fallbacks), then apply the segment's `Orientation` angle about `u`. This preserves rotations of the driving LCS/App::Part/Body frames, with manual roll composed on top. The cable uses the same lateral axis for its lane offset.
-- **Arrangement (current)**: For each segment, filter the ordered member cables to those using that segment and place their centres along a lateral axis using edge-to-edge spacing `r_i + gap + r_(i+1)`. The row is centred on the bundle segment axis. The harness stores offsets in `Layout` keyed by `segmentName|cableName`; per-segment order overrides and 2D rows can be added later.
-- **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. The cable reads its offset from `cable.Harness.Layout` and shifts both endpoints by `side * offset`, using the same stable lateral axis as the harness. Normal direction: `start = segment.start + shift`, `end = segment.end + shift`, tangent `+u`. Reversed direction: `start = segment.end + shift`, `end = segment.start + shift`, tangent `-u`.
+- **Arrangement (current)**: The harness has a `Pattern` enum (`Circular` by default, or `Linear`). Linear places centres along the lateral axis using edge-to-edge spacing `r_i + gap + r_(i+1)` and centres the row on the segment axis. Circular distributes centres at equal angles around the axis, choosing a ring radius large enough for the requested adjacent clearance. The harness stores the resulting 2D/3D offset vectors in `Layout` keyed by `segmentName|cableName`; exact circular gap packing and per-segment order overrides can be added later.
+- **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. The cable reads the harness-computed global offset vector from `cable.Harness.Layout` and shifts both endpoints by that vector. Normal direction: `start = segment.start + offset`, `end = segment.end + offset`, tangent `+u`. Reversed direction: `start = segment.end + offset`, `end = segment.start + offset`, tangent `-u`.
 - **Bi-arc generation**: Resolve every route row into ordered route pieces (bundle runs plus direct connections). Feed the pieces to the M1 `WireCreator`, which inserts bi-arcs between consecutive pieces; gaps and reversals are handled at cable level, not bundle level.
 - **Branching**: A cable may route over any ordered subset of bundle segments. Per-segment member lists are derived from the cables' routes, so cables can join or leave the bundle between segments without changing the bundle segment definitions.
 - **Geometry/recompute**: The harness is upstream of its cables: cables link `cable.Harness`, while the harness finds cables through `InList` and never links them. Harness layout depends on segment geometry and cable order/gap/diameter; cable changes touch the harness explicitly. Segments and cables also keep hidden ancestor-group dependencies so moving an enclosing `App::Part`/Body recomputes them. Recomputing follows segments -> harness layout -> cables -> paths/sweeps/validation.
-- **UI**: Harness editor for adding/removing segments, picking start/end references and setting the cable gap. Cable route editor for adding point-pair entries or picking bundle segment cylinders, with reordering and branching; direction is implied by the start/end slot (start normal, end reversed). The harness claims its segments and cable groups in the tree; per-segment order/orientation UI remains future work.
+- **UI**: Harness editor for adding/removing segments, picking start/end references, setting gap, pattern and per-segment rotation. Cable route editor for adding point-pair entries or picking bundle segment cylinders, with reordering and branching; direction is implied by the start/end slot (start normal, end reversed). The harness claims its segments and cable groups in the tree. Advanced pattern/placement editing is deferred to M2b.
 - **Integration**: Use the same point-reference model as M1 so bundle segments can be driven by PartDesign/Assembly geometry and standard placement gizmos.
 
 ### Acceptance Criteria
@@ -142,15 +140,44 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - Direct precise segments and bundle segments can be mixed in the same cable route
 - Cable routes can use subsets of the bundle and branch in/out
 - Bi-arcs are generated at the cable level between consecutive route pieces, including direct/bundle transitions
-- Cables are placed side by side on each segment with a definable gap
-- Gap is consistent between cables regardless of different diameters
+- Cables are arranged in a definable gap using either the circular or linear harness pattern
+- Linear patterns keep edge-to-edge gaps consistent for different diameters; circular patterns keep at least the requested clearance
 - The harness computes lane offsets and cables read them from the harness
 - Cable changes (route, diameter, harness membership) invalidate and recompute the harness layout
-- Cable order per segment is editable
 - Per-segment arrangement orientation can be set and changed
 - Updating segment references, routes, order, gap or diameters recomputes affected cable geometry
 
+> **Scope note:** Basic circular/linear patterns and manual per-segment rotation are in M2. The dedicated pattern and placement editor is tracked separately in Milestone 2b.
+
+## Milestone 2b: Harness Pattern & Placement Editor (Follow-up)
+Goal: Provide a dedicated editor for the growing set of cable pattern and placement options without expanding basic M2.
+
+### Requirements
+- [ ] **Pattern library**: Support linear rows, circular rings, multi-row/grid layouts and custom placement patterns
+- [ ] **Pattern editor**: Choose pattern per harness and per bundle segment; configure origin/anchor, rotation, gap and spacing rules
+- [ ] **Cable placement**: Edit per-segment cable order and per-segment overrides; reorder cables in a cross-section preview
+- [ ] **Slot editing**: Assign cables to explicit slots/offsets with constraints and clearance checks
+- [ ] **Mixed diameters**: Clearance-aware packing and warnings for circular and 2D patterns with different cable diameters
+- [ ] **Preview**: 2D cross-section preview in the task panel and optional 3D lane preview
+- [ ] **Persistence/recompute**: Store pattern settings and slot assignments; recompute all affected cables on change
+
+### Technical Details
+- Extend `WireHarness`/`WireBundleSegment` with pattern settings and per-segment overrides; do not add cable back-links
+- Keep layout computation in the harness; store final offsets/slots as plain data/global vectors
+- Build a dedicated 2D cross-section editor for the selected segment
+- Use deterministic ordering and stable slot IDs so editing remains predictable
+- Add clearance/packing checks; circular patterns must account for mixed diameters
+- Keep the simple `Pattern` property (`Circular`/`Linear`) as the M2 baseline; M2b generalizes it
+
+### Acceptance Criteria
+- Can choose and edit a pattern per harness and per bundle segment
+- Can edit per-segment cable order and explicit cable slots/offsets
+- Mixed-diameter cables maintain requested clearance or show warnings
+- Pattern/placement changes recompute all affected cable geometry
+- Pattern and placement settings persist across save/reload
+
 ## Future Milestones (High-level)
+- **M2b**: Dedicated harness pattern and placement editor (patterns, per-segment order, slot editing, preview)
 - **M3**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)
 - **M4**: Pathfinding/obstacle avoidance, properties (gauge/color), length, BOM, discrete cable lengths, wire loops, cable-clip placeholders, connector lengths, wire endpoint presets, stripped tips/ferrules, flat ribbon cable routing, foamboard manufacturing plans
 - **M5**: Polish, docs, packaging

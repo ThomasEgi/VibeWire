@@ -88,6 +88,9 @@ class WireBundleTaskPanel:
         self.gap_spin.setValue(1.0)
         self.gap_spin.setSuffix(" mm")
         radius_form.addRow("Cable gap:", self.gap_spin)
+        self.pattern_combo = QtGui.QComboBox()
+        self.pattern_combo.addItems(["Circular", "Linear"])
+        radius_form.addRow("Pattern:", self.pattern_combo)
         layout.addLayout(radius_form)
 
         self.btn_apply = QtGui.QPushButton()
@@ -140,6 +143,8 @@ class WireBundleTaskPanel:
             self.radius_spin.setValue(self.segments[0]["object"].Radius.Value)
         if "Gap" in self.bundle.PropertiesList:
             self.gap_spin.setValue(self.bundle.Gap.Value)
+        if "Pattern" in self.bundle.PropertiesList:
+            self.pattern_combo.setCurrentText(self.bundle.Pattern)
         self._update_list()
         if self.segments:
             self.segment_list.setCurrentRow(0)
@@ -407,7 +412,16 @@ class WireBundleTaskPanel:
             bundle_usable = self._is_valid(self.bundle, document)
             if not bundle_usable:
                 self.bundle = create_wire_harness(document)
+            if "Pattern" not in self.bundle.PropertiesList:
+                self.bundle.addProperty(
+                    "App::PropertyEnumeration",
+                    "Pattern",
+                    "Harness",
+                    "Cable arrangement pattern",
+                )
+                self.bundle.Pattern = ["Circular", "Linear"]
             self.bundle.Gap = self.gap_spin.value()
+            self.bundle.Pattern = self.pattern_combo.currentText()
 
             panel_objects = []
             for entry, (start, end) in zip(self.segments, segment_points):

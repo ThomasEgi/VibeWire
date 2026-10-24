@@ -1,6 +1,5 @@
 """Persistent wire cable document object and view provider."""
 
-import math
 import os
 
 import FreeCAD as App
@@ -11,7 +10,7 @@ from .WireBundle import (
     ancestor_groups,
     is_bundle_segment,
     is_harness,
-    segment_side_vector,
+    segment_basis,
 )
 from .WireCreator import Segment, WireCreator
 
@@ -224,14 +223,28 @@ class WireCableProxy:
     def _bundle_offset(cable, bundle_segment):
         harness = getattr(cable, "Harness", None)
         if not is_harness(harness):
-            return 0.0
+            return App.Vector(0.0, 0.0, 0.0)
         try:
             if bundle_segment not in harness.Segments:
-                return 0.0
+                return App.Vector(0.0, 0.0, 0.0)
             key = f"{bundle_segment.Name}|{cable.Name}"
-            return float(harness.Layout.get(key, "0.0"))
+            raw = harness.Layout.get(key, "0,0,0")
+            parts = [
+                float(value)
+                for value in raw.replace(";", ",").split(",")
+                if value.strip()
+            ]
         except Exception:
-            return 0.0
+            return App.Vector(0.0, 0.0, 0.0)
+
+        if len(parts) >= 3:
+            return App.Vector(parts[0], parts[1], parts[2])
+        side, normal = segment_basis(bundle_segment)
+        if len(parts) == 2:
+            return side * parts[0] + normal * parts[1]
+        if len(parts) == 1:
+            return side * parts[0]
+        return App.Vector(0.0, 0.0, 0.0)
 
     def _bundle_points(self, cable, bundle_segment):
         start_obj = bundle_segment.Start
@@ -247,10 +260,7 @@ class WireCableProxy:
                 f"Bundle segment {bundle_segment.Label} has identical start and end points."
             )
         offset = self._bundle_offset(cable, bundle_segment)
-        orientation = getattr(bundle_segment, "Orientation", None)
-        angle = math.radians(orientation.Value) if orientation is not None else 0.0
-        shift = segment_side_vector(start, end, angle, start_obj, end_obj) * offset
-        return start + shift, end + shift
+        return start + offset, end + offset
 
     @staticmethod
     def _append_segment(segments, start, end):

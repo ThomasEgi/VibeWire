@@ -49,6 +49,15 @@ class WireHarnessProxy:
                 "Edge-to-edge gap between cables",
             )
             obj.Gap = 1.0
+        if "Pattern" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "Pattern",
+                "Harness",
+                "Cable arrangement pattern",
+            )
+            obj.Pattern = ["Circular", "Linear"]
+            obj.Pattern = "Circular"
         if "Layout" not in properties:
             obj.addProperty(
                 "App::PropertyMap",
@@ -73,6 +82,7 @@ class WireHarnessProxy:
         )
 
         gap = obj.Gap.Value
+        pattern = getattr(obj, "Pattern", "Circular")
         layout = {}
         for segment in obj.Segments:
             if not is_bundle_segment(segment):
@@ -82,16 +92,51 @@ class WireHarnessProxy:
             ]
             if not users:
                 continue
-            total = sum(max(0.0, cable.Diameter.Value) for cable in users)
-            total += gap * (len(users) - 1)
-            position = -total / 2.0
-            for cable in users:
-                diameter = max(0.0, cable.Diameter.Value)
-                layout[f"{segment.Name}|{cable.Name}"] = str(
-                    position + diameter / 2.0
+
+            diameters = [max(0.0, cable.Diameter.Value) for cable in users]
+            count = len(users)
+            if pattern == "Linear":
+                positions = self._linear_positions(diameters, gap)
+            else:
+                positions = self._circular_positions(diameters, gap)
+
+            side, normal = segment_basis(segment)
+            for cable, (x, y) in zip(users, positions):
+                offset = side * x + normal * y
+                layout[f"{segment.Name}|{cable.Name}"] = (
+                    f"{offset.x:.9f},{offset.y:.9f},{offset.z:.9f}"
                 )
-                position += diameter + gap
         obj.Layout = layout
+
+    @staticmethod
+    def _linear_positions(diameters, gap):
+        total = sum(diameters) + gap * (len(diameters) - 1)
+        position = -total / 2.0
+        positions = []
+        for diameter in diameters:
+            positions.append((position + diameter / 2.0, 0.0))
+            position += diameter + gap
+        return positions
+
+    @staticmethod
+    def _circular_positions(diameters, gap):
+        count = len(diameters)
+        if count == 1:
+            return [(0.0, 0.0)]
+        angle_step = 2.0 * math.pi / count
+        required = [
+            diameters[i] / 2.0
+            + gap
+            + diameters[(i + 1) % count] / 2.0
+            for i in range(count)
+        ]
+        radius = max(required) / (2.0 * math.sin(math.pi / count))
+        positions = []
+        for index in range(count):
+            angle = index * angle_step
+            positions.append((radius * math.cos(angle), radius * math.sin(angle)))
+        return positions
+
 
     def dumps(self):
         return self.Type
@@ -109,6 +154,30 @@ class WireHarnessProxy:
 
 
 WireBundleProxy = WireHarnessProxy
+
+
+def segment_basis(segment):
+    start_obj = segment.Start
+    end_obj = segment.End
+    if start_obj is None or end_obj is None:
+        return App.Vector(1.0, 0.0, 0.0), App.Vector(0.0, 1.0, 0.0)
+    start = start_obj.getGlobalPlacement().Base
+    end = end_obj.getGlobalPlacement().Base
+    direction = end - start
+    length = direction.Length
+    if length < 1e-9:
+        return App.Vector(1.0, 0.0, 0.0), App.Vector(0.0, 1.0, 0.0)
+    direction = direction / length
+    orientation = 0.0
+    if "Orientation" in segment.PropertiesList:
+        orientation = math.radians(segment.Orientation.Value)
+    side = segment_side_vector(start, end, orientation, start_obj, end_obj)
+    normal = direction.cross(side)
+    if normal.Length < 1e-9:
+        normal = App.Vector(0.0, 0.0, 1.0)
+    else:
+        normal = normal.normalize()
+    return side, normal
 
 
 def is_harness(obj):

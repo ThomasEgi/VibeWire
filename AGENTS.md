@@ -62,9 +62,9 @@ The module provides a `WireCreator` class with these main operations:
 - Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `CableOrder`, `Gap` and a computed `Layout` map
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
 - Cables link the harness through `cable.Harness`; the harness finds member cables through `InList` and never links them back (that would create a dependency cycle)
-- `Layout` stores lane offsets keyed by `segmentName|cableName`; cables read their offset from the harness
+- `Layout` stores lane offset vectors (`x,y,z`) keyed by `segmentName|cableName`; cables read their offset directly and shift both bundle-run endpoints
 - Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, a `Radius` and an `Orientation` (roll about the segment axis)
 - The lateral arrangement axis is derived from the averaged global rotations of the start/end reference frames, then rotated by the segment `Orientation`; manual roll composes on top of the input rotation
 - Use `App::PropertyLinkGlobal` for segment start/end references; normal `App::PropertyLink` triggers FreeCAD scope warnings when the referenced objects live inside an `App::Part`
