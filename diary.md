@@ -19,3 +19,6 @@
 - 2026-10-24: Extended the wire tool so start/end picks accept bundle segment cylinders: start nodes run normal, end nodes run reversed. Wire routing now expands bundle nodes into route pieces and recomputes when bundle segment references move.
 - 2026-10-24: Picking a bundle segment in the wire tool now auto-fills the other node from the segment endpoint, so one click defines a run; start is normal and end is reversed. Legacy same-segment-twice rows resolve as a single normal run.
 - 2026-10-24: Fixed stale bundle/wire geometry when moving an enclosing App::Part: segments and cables now keep hidden ancestor-group dependencies (Dependencies) so outer Part moves trigger recompute.
+- 2026-10-24: Added harness-level lane layout: WireHarness stores cable order, gap and per-segment offsets; cables link the harness, read their lane offset, and touch the harness when route/diameter changes. Verifies parallel routing with mixed diameters and reversed runs.
+- 2026-10-24: Added per-bundle-segment rotation (Orientation) applied to the harness lane axis, and migrated cable Points to PropertyLinkListGlobal to eliminate App::Part scope warnings.
+- 2026-10-24: Composed bundle-segment orientation from the driving reference coordinate systems: lane axis now uses the averaged start/end reference frames plus the manual segment roll.

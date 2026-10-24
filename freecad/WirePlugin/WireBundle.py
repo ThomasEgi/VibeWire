@@ -1,5 +1,6 @@
 """Persistent bundle and bundle-segment objects."""
 
+import math
 import os
 
 import FreeCAD as App
@@ -15,12 +16,12 @@ def is_bundle_segment(obj):
     return getattr(getattr(obj, "Proxy", None), "Type", None) == BUNDLE_SEGMENT_TYPE
 
 
-class WireBundleProxy:
-    """Bundle container for independent straight routing segments."""
+class WireHarnessProxy:
+    """Harness container and layout authority for bundle segments and cables."""
 
     def __init__(self, obj):
         obj.Proxy = self
-        self.Type = "WireBundle"
+        self.Type = "WireHarness"
         self._add_properties(obj)
 
     @staticmethod
@@ -30,29 +31,189 @@ class WireBundleProxy:
             obj.addProperty(
                 "App::PropertyLinkList",
                 "Segments",
-                "Bundle",
+                "Harness",
                 "Independent straight bundle segments",
             )
-        if "Cables" not in properties:
+        if "CableOrder" not in properties:
             obj.addProperty(
-                "App::PropertyLinkList",
-                "Cables",
-                "Bundle",
-                "Cables routed on this bundle",
+                "App::PropertyStringList",
+                "CableOrder",
+                "Harness",
+                "Preferred cable order inside the harness",
             )
+        if "Gap" not in properties:
+            obj.addProperty(
+                "App::PropertyLength",
+                "Gap",
+                "Harness",
+                "Edge-to-edge gap between cables",
+            )
+            obj.Gap = 1.0
+        if "Layout" not in properties:
+            obj.addProperty(
+                "App::PropertyMap",
+                "Layout",
+                "Harness",
+                "Computed cable lane offsets keyed by segment|cable",
+            )
+            try:
+                obj.setEditorMode("Layout", 2)
+            except Exception:
+                pass
 
     def execute(self, obj):
-        pass
+        cables = [item for item in obj.InList if is_wire_cable(item)]
+        order = list(obj.CableOrder)
+        order_index = {name: index for index, name in enumerate(order)}
+        cables.sort(
+            key=lambda cable: (
+                order_index.get(cable.Name, len(order)),
+                cable.Name,
+            )
+        )
+
+        gap = obj.Gap.Value
+        layout = {}
+        for segment in obj.Segments:
+            if not is_bundle_segment(segment):
+                continue
+            users = [
+                cable for cable in cables if cable_uses_segment(cable, segment)
+            ]
+            if not users:
+                continue
+            total = sum(max(0.0, cable.Diameter.Value) for cable in users)
+            total += gap * (len(users) - 1)
+            position = -total / 2.0
+            for cable in users:
+                diameter = max(0.0, cable.Diameter.Value)
+                layout[f"{segment.Name}|{cable.Name}"] = str(
+                    position + diameter / 2.0
+                )
+                position += diameter + gap
+        obj.Layout = layout
 
     def dumps(self):
         return self.Type
 
     def loads(self, state):
-        if state:
-            self.Type = state
+        self.Type = "WireHarness"
 
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
+        if "Cables" in obj.PropertiesList:
+            try:
+                obj.removeProperty("Cables")
+            except Exception:
+                pass
+
+
+WireBundleProxy = WireHarnessProxy
+
+
+def is_harness(obj):
+    return getattr(getattr(obj, "Proxy", None), "Type", None) in (
+        "WireHarness",
+        "WireBundle",
+    )
+
+
+def is_wire_cable(obj):
+    return getattr(getattr(obj, "Proxy", None), "Type", None) == "WireCable"
+
+
+def cable_uses_segment(cable, segment):
+    return any(node is segment for node in cable.Points)
+
+
+def find_harness_for_segments(nodes):
+    for node in nodes:
+        if not is_bundle_segment(node):
+            continue
+        for parent in node.InList:
+            if is_harness(parent):
+                return parent
+    return None
+
+
+def add_cable_to_harness(harness, cable):
+    if not is_harness(harness):
+        try:
+            cable.Harness = None
+        except Exception:
+            pass
+        return
+    cable.Harness = harness
+    order = list(harness.CableOrder)
+    if cable.Name not in order:
+        order.append(cable.Name)
+        harness.CableOrder = order
+    harness.touch()
+
+
+def _reference_axis(ref, axis):
+    if ref is None:
+        return None
+    try:
+        return ref.getGlobalPlacement().Rotation.multVec(axis)
+    except Exception:
+        return None
+
+
+def _averaged_reference_axis(start_ref, end_ref, axis):
+    start_axis = _reference_axis(start_ref, axis)
+    end_axis = _reference_axis(end_ref, axis)
+    if start_axis is None and end_axis is None:
+        return None
+    if start_axis is None:
+        return end_axis.normalize() if end_axis.Length > 1e-9 else None
+    if end_axis is None:
+        return start_axis.normalize() if start_axis.Length > 1e-9 else None
+    combined = start_axis + end_axis
+    if combined.Length < 1e-9:
+        return start_axis.normalize()
+    return combined.normalize()
+
+
+def segment_side_vector(
+    start, end, orientation=0.0, start_ref=None, end_ref=None
+):
+    """Lateral axis from the averaged reference frames plus manual roll."""
+    direction = end - start
+    length = direction.Length
+    if length < 1e-9:
+        return App.Vector(0.0, 0.0, 0.0)
+    direction = direction / length
+
+    side = None
+    for axis in (
+        App.Vector(0.0, 0.0, 1.0),
+        App.Vector(0.0, 1.0, 0.0),
+        App.Vector(1.0, 0.0, 0.0),
+    ):
+        up = _averaged_reference_axis(start_ref, end_ref, axis)
+        if up is None:
+            continue
+        candidate = direction.cross(up)
+        if candidate.Length > 1e-9:
+            side = candidate.normalize()
+            break
+
+    if side is None:
+        up = App.Vector(0.0, 0.0, 1.0)
+        if abs(direction.dot(up)) > 0.99:
+            up = App.Vector(0.0, 1.0, 0.0)
+        side = direction.cross(up)
+        if side.Length < 1e-9:
+            side = direction.cross(App.Vector(1.0, 0.0, 0.0))
+        side = side.normalize()
+
+    if abs(orientation) > 1e-12:
+        normal = direction.cross(side)
+        if normal.Length > 1e-9:
+            normal = normal.normalize()
+            side = side * math.cos(orientation) + normal * math.sin(orientation)
+    return side
 
 
 class ViewProviderWireBundle:
@@ -70,7 +231,21 @@ class ViewProviderWireBundle:
 
     def claimChildren(self):
         obj = getattr(self, "Object", None)
-        return list(obj.Segments) if obj is not None else []
+        if obj is None:
+            return []
+        children = list(obj.Segments)
+        try:
+            from .WireCable import find_container
+
+            for cable in obj.InList:
+                if not is_wire_cable(cable):
+                    continue
+                group = find_container(cable)
+                if group is not None and group not in children:
+                    children.append(group)
+        except Exception:
+            pass
+        return children
 
     def setEdit(self, vobj, mode):
         if mode != 0:
@@ -124,6 +299,9 @@ class ViewProviderWireBundle:
         return None
 
 
+ViewProviderWireHarness = ViewProviderWireBundle
+
+
 class WireBundleSegmentProxy:
     """Straight bundle segment displayed as a pickable cylinder."""
 
@@ -144,6 +322,14 @@ class WireBundleSegmentProxy:
                 "Visualization radius",
             )
             obj.Radius = 10.0
+        if "Orientation" not in obj.PropertiesList:
+            obj.addProperty(
+                "App::PropertyAngle",
+                "Orientation",
+                "Segment",
+                "Rotation of the cable arrangement about the segment axis",
+            )
+            obj.Orientation = 0.0
         if "Dependencies" not in obj.PropertiesList:
             obj.addProperty(
                 "App::PropertyLinkListGlobal",
@@ -234,13 +420,17 @@ def update_segment_dependencies(segment):
         segment.Dependencies = dependencies
 
 
-def create_wire_bundle(document, label="Bundle"):
-    bundle = document.addObject("App::FeaturePython", "WireBundle")
-    bundle.Label = label
-    WireBundleProxy(bundle)
+def create_wire_harness(document, label="Harness"):
+    harness = document.addObject("App::FeaturePython", "WireHarness")
+    harness.Label = label
+    WireHarnessProxy(harness)
     if App.GuiUp:
-        ViewProviderWireBundle(bundle.ViewObject)
-    return bundle
+        ViewProviderWireHarness(harness.ViewObject)
+    return harness
+
+
+def create_wire_bundle(document, label="Harness"):
+    return create_wire_harness(document, label=label)
 
 
 def create_bundle_segment(bundle, start, end, radius=10.0):

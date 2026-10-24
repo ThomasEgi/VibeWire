@@ -12,7 +12,7 @@ from .PointReference import (
 )
 from .WireBundle import (
     create_bundle_segment,
-    create_wire_bundle,
+    create_wire_harness,
     remove_bundle_segment,
     update_segment_dependencies,
 )
@@ -30,7 +30,7 @@ class WireBundleTaskPanel:
 
         self.form = QtGui.QWidget()
         self.form.setWindowTitle(
-            "Edit Bundle" if bundle is not None else "Create Bundle"
+            "Edit Harness" if bundle is not None else "Create Harness"
         )
         layout = QtGui.QVBoxLayout(self.form)
 
@@ -64,6 +64,13 @@ class WireBundleTaskPanel:
         detail_layout.addRow(
             "End:", self._label_with_button(self.end_label, self.btn_pick_end)
         )
+        self.orientation_spin = QtGui.QDoubleSpinBox()
+        self.orientation_spin.setRange(-360.0, 360.0)
+        self.orientation_spin.setDecimals(1)
+        self.orientation_spin.setSingleStep(5.0)
+        self.orientation_spin.setValue(0.0)
+        self.orientation_spin.setSuffix(" deg")
+        detail_layout.addRow("Rotation:", self.orientation_spin)
         layout.addWidget(detail_group)
 
         radius_form = QtGui.QFormLayout()
@@ -74,6 +81,13 @@ class WireBundleTaskPanel:
         self.radius_spin.setValue(10.0)
         self.radius_spin.setSuffix(" mm")
         radius_form.addRow("Display radius:", self.radius_spin)
+        self.gap_spin = QtGui.QDoubleSpinBox()
+        self.gap_spin.setRange(0.0, 1000.0)
+        self.gap_spin.setDecimals(2)
+        self.gap_spin.setSingleStep(1.0)
+        self.gap_spin.setValue(1.0)
+        self.gap_spin.setSuffix(" mm")
+        radius_form.addRow("Cable gap:", self.gap_spin)
         layout.addLayout(radius_form)
 
         self.btn_apply = QtGui.QPushButton()
@@ -90,6 +104,7 @@ class WireBundleTaskPanel:
         self.start_label.clicked.connect(lambda: self.select_point("start"))
         self.end_label.clicked.connect(lambda: self.select_point("end"))
         self.btn_apply.clicked.connect(self.apply)
+        self.orientation_spin.valueChanged.connect(self._on_orientation_changed)
         self.segment_list.currentRowChanged.connect(self._update_detail)
         self.form.destroyed.connect(self._on_form_destroyed)
 
@@ -102,7 +117,7 @@ class WireBundleTaskPanel:
 
     def _update_button_labels(self):
         action = "Update" if self.bundle is not None else "Create"
-        self.btn_apply.setText(f"{action} Bundle")
+        self.btn_apply.setText(f"{action} Harness")
 
     def _load_bundle(self):
         self.segments = []
@@ -110,20 +125,26 @@ class WireBundleTaskPanel:
         for segment in self.bundle.Segments:
             start = segment.Start
             end = segment.End
+            orientation = 0.0
+            if "Orientation" in segment.PropertiesList:
+                orientation = segment.Orientation.Value
             self.segments.append(
                 {
                     "start": (document.Name, start.Name) if start else None,
                     "end": (document.Name, end.Name) if end else None,
                     "object": segment,
+                    "orientation": orientation,
                 }
             )
         if self.segments:
             self.radius_spin.setValue(self.segments[0]["object"].Radius.Value)
+        if "Gap" in self.bundle.PropertiesList:
+            self.gap_spin.setValue(self.bundle.Gap.Value)
         self._update_list()
         if self.segments:
             self.segment_list.setCurrentRow(0)
         self._update_detail()
-        self.status_label.setText(f"Bundle has {len(self.segments)} segment(s).")
+        self.status_label.setText(f"Harness has {len(self.segments)} segment(s).")
 
     @staticmethod
     def _label_with_button(label, button):
@@ -144,7 +165,7 @@ class WireBundleTaskPanel:
         return True
 
     def add_segment(self):
-        self.segments.append({"start": None, "end": None, "object": None})
+        self.segments.append({"start": None, "end": None, "object": None, "orientation": 0.0})
         self._update_list()
         self.segment_list.setCurrentRow(len(self.segments) - 1)
 
@@ -270,15 +291,27 @@ class WireBundleTaskPanel:
         self.btn_pick_start.setEnabled(has_segment)
         self.btn_pick_end.setEnabled(has_segment)
         self.btn_remove.setEnabled(has_segment)
+        self.orientation_spin.setEnabled(has_segment)
 
         if not has_segment:
             self._update_point_label(self.start_label, None)
             self._update_point_label(self.end_label, None)
+            self.orientation_spin.blockSignals(True)
+            self.orientation_spin.setValue(0.0)
+            self.orientation_spin.blockSignals(False)
             return
 
         segment = self.segments[row]
         self._update_point_label(self.start_label, segment["start"])
         self._update_point_label(self.end_label, segment["end"])
+        self.orientation_spin.blockSignals(True)
+        self.orientation_spin.setValue(segment.get("orientation", 0.0))
+        self.orientation_spin.blockSignals(False)
+
+    def _on_orientation_changed(self, value):
+        row = self._current_row()
+        if row is not None:
+            self.segments[row]["orientation"] = float(value)
 
     def _update_point_label(self, label, ref):
         label.setText(self._point_text(ref))
@@ -373,7 +406,8 @@ class WireBundleTaskPanel:
         try:
             bundle_usable = self._is_valid(self.bundle, document)
             if not bundle_usable:
-                self.bundle = create_wire_bundle(document)
+                self.bundle = create_wire_harness(document)
+            self.bundle.Gap = self.gap_spin.value()
 
             panel_objects = []
             for entry, (start, end) in zip(self.segments, segment_points):
@@ -382,11 +416,13 @@ class WireBundleTaskPanel:
                     segment.Start = start
                     segment.End = end
                     segment.Radius = radius
+                    segment.Orientation = entry.get("orientation", 0.0)
                     update_segment_dependencies(segment)
                 else:
                     segment = create_bundle_segment(
                         self.bundle, start, end, radius=radius
                     )
+                    segment.Orientation = entry.get("orientation", 0.0)
                     entry["object"] = segment
                 panel_objects.append(segment)
 
@@ -401,7 +437,7 @@ class WireBundleTaskPanel:
         document.recompute()
         self._update_button_labels()
         self.status_label.setStyleSheet("")
-        self.status_label.setText(f"Bundle has {len(panel_objects)} segment(s).")
+        self.status_label.setText(f"Harness has {len(panel_objects)} segment(s).")
 
     def reject(self):
         self._stop_picking()

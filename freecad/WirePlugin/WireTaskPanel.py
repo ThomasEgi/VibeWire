@@ -6,7 +6,11 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
-from .WireBundle import is_bundle_segment
+from .WireBundle import (
+    add_cable_to_harness,
+    find_harness_for_segments,
+    is_bundle_segment,
+)
 from .WireCable import (
     create_wire_cable,
     ensure_support_objects,
@@ -516,6 +520,7 @@ class WireTaskPanel:
 
         diameter = self.diameter_spin.value()
         min_bend_radius = self.min_bend_spin.value()
+        harness = find_harness_for_segments(links)
         wire_name = self.name_edit.text().strip()
         if not wire_name:
             wire_name = self._auto_wire_name(links)
@@ -549,6 +554,11 @@ class WireTaskPanel:
         except Exception as error:
             QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
             return
+
+        if harness is not None:
+            add_cable_to_harness(harness, self.cable)
+        else:
+            self.cable.Harness = None
 
         self.name_edit.setText(wire_name)
         document.recompute()

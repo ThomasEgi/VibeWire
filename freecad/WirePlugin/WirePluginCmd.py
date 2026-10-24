@@ -32,12 +32,12 @@ class CreateWireCommand:
 Gui.addCommand("WirePlugin_CreateWire", CreateWireCommand())
 
 
-class DefineBundleCommand:
+class DefineHarnessCommand:
     def GetResources(self):
         return {
             "Pixmap": ICON,
-            "MenuText": "Define Bundle",
-            "ToolTip": "Define independent straight bundle segments",
+            "MenuText": "Define Harness",
+            "ToolTip": "Define harness bundle segments and cable gap",
         }
 
     def Activated(self):
@@ -50,4 +50,4 @@ class DefineBundleCommand:
         return True
 
 
-Gui.addCommand("WirePlugin_DefineBundle", DefineBundleCommand())
+Gui.addCommand("WirePlugin_DefineHarness", DefineHarnessCommand())

@@ -1,12 +1,18 @@
 """Persistent wire cable document object and view provider."""
 
+import math
 import os
 
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 
-from .WireBundle import ancestor_groups, is_bundle_segment
+from .WireBundle import (
+    ancestor_groups,
+    is_bundle_segment,
+    is_harness,
+    segment_side_vector,
+)
 from .WireCreator import Segment, WireCreator
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
@@ -24,12 +30,18 @@ class WireCableProxy:
     def _add_properties(obj):
         properties = obj.PropertiesList
 
-        if "Points" not in properties:
+        _ensure_global_link_list(
+            obj,
+            "Points",
+            "Wire",
+            "Ordered start/end node references (start 1, end 1, start 2, ...)",
+        )
+        if "Harness" not in properties:
             obj.addProperty(
-                "App::PropertyLinkList",
-                "Points",
+                "App::PropertyLinkGlobal",
+                "Harness",
                 "Wire",
-                "Ordered start/end coordinate systems (start 1, end 1, start 2, ...)",
+                "Harness providing the cable lane layout",
             )
         if "Diameter" not in properties:
             obj.addProperty(
@@ -125,7 +137,7 @@ class WireCableProxy:
             end_is_bundle = is_bundle_segment(end_obj)
             if start_is_bundle and end_is_bundle and start_obj is end_obj:
                 try:
-                    bundle_start, bundle_end = self._bundle_points(start_obj)
+                    bundle_start, bundle_end = self._bundle_points(obj, start_obj)
                     self._append_segment(segments, bundle_start, bundle_end)
                 except ValueError as error:
                     self._set_error(obj, str(error))
@@ -134,24 +146,30 @@ class WireCableProxy:
 
             try:
                 if start_is_bundle:
-                    bundle_start, bundle_end = self._bundle_points(start_obj)
+                    bundle_start, bundle_end = self._bundle_points(obj, start_obj)
                     self._append_segment(segments, bundle_start, bundle_end)
                     connection = bundle_end
                 else:
                     connection = start_obj.getGlobalPlacement().Base
 
                 if end_is_bundle:
-                    bundle_start, bundle_end = self._bundle_points(end_obj)
+                    bundle_start, bundle_end = self._bundle_points(obj, end_obj)
                     if not start_is_bundle:
-                        self._append_segment(segments, connection, bundle_end)
+                        if start_obj is not end_obj.End:
+                            self._append_segment(segments, connection, bundle_end)
                     self._append_segment(segments, bundle_end, bundle_start)
                 else:
                     end_point = end_obj.getGlobalPlacement().Base
-                    if not start_is_bundle and (end_point - connection).Length < 1e-9:
-                        raise ValueError(
-                            f"Segment {number} has identical start and end points."
-                        )
-                    self._append_segment(segments, connection, end_point)
+                    if start_is_bundle and end_obj is start_obj.End:
+                        pass
+                    else:
+                        if not start_is_bundle and (
+                            end_point - connection
+                        ).Length < 1e-9:
+                            raise ValueError(
+                                f"Segment {number} has identical start and end points."
+                            )
+                        self._append_segment(segments, connection, end_point)
             except ValueError as error:
                 self._set_error(obj, str(error))
                 return
@@ -203,7 +221,19 @@ class WireCableProxy:
         obj.Status = status
 
     @staticmethod
-    def _bundle_points(bundle_segment):
+    def _bundle_offset(cable, bundle_segment):
+        harness = getattr(cable, "Harness", None)
+        if not is_harness(harness):
+            return 0.0
+        try:
+            if bundle_segment not in harness.Segments:
+                return 0.0
+            key = f"{bundle_segment.Name}|{cable.Name}"
+            return float(harness.Layout.get(key, "0.0"))
+        except Exception:
+            return 0.0
+
+    def _bundle_points(self, cable, bundle_segment):
         start_obj = bundle_segment.Start
         end_obj = bundle_segment.End
         if start_obj is None or end_obj is None:
@@ -216,7 +246,11 @@ class WireCableProxy:
             raise ValueError(
                 f"Bundle segment {bundle_segment.Label} has identical start and end points."
             )
-        return start, end
+        offset = self._bundle_offset(cable, bundle_segment)
+        orientation = getattr(bundle_segment, "Orientation", None)
+        angle = math.radians(orientation.Value) if orientation is not None else 0.0
+        shift = segment_side_vector(start, end, angle, start_obj, end_obj) * offset
+        return start + shift, end + shift
 
     @staticmethod
     def _append_segment(segments, start, end):
@@ -257,6 +291,21 @@ class WireCableProxy:
         self._add_properties(obj)
         update_cable_dependencies(obj)
         _remove_legacy_container(obj)
+
+    def onChanged(self, obj, prop):
+        if prop == "Points":
+            update_cable_dependencies(obj)
+        if prop in ("Points", "Diameter", "Harness"):
+            self._touch_harness(obj)
+
+    @staticmethod
+    def _touch_harness(cable):
+        harness = getattr(cable, "Harness", None)
+        if is_harness(harness):
+            try:
+                harness.touch()
+            except Exception:
+                pass
 
 
 class ViewProviderWireCable:
@@ -322,6 +371,15 @@ class ViewProviderWireCable:
             if _is_valid(link, document)
         ]
         group_name = group.Name if _is_valid(group, document) else None
+        harness = getattr(obj, "Harness", None)
+        if is_harness(harness):
+            try:
+                harness.CableOrder = [
+                    name for name in harness.CableOrder if name != obj.Name
+                ]
+                harness.touch()
+            except Exception:
+                pass
 
         def cleanup():
             doc = App.getDocument(document_name)
@@ -371,6 +429,20 @@ def update_cable_dependencies(cable):
             dependencies.append(group)
     if "Dependencies" in cable.PropertiesList:
         cable.Dependencies = dependencies
+
+
+def _ensure_global_link_list(obj, name, group, description):
+    """Migrate link lists to global so App::Part-scoped references are allowed."""
+    if name in obj.PropertiesList:
+        if obj.getTypeIdOfProperty(name) == "App::PropertyLinkListGlobal":
+            return
+        value = list(getattr(obj, name))
+        obj.removeProperty(name)
+    else:
+        value = []
+    obj.addProperty("App::PropertyLinkListGlobal", name, group, description)
+    if value:
+        setattr(obj, name, value)
 
 
 def _is_valid(obj, document):

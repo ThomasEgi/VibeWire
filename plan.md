@@ -107,35 +107,35 @@ Goal: Get the core model working for a single cable before handling bundles/mult
 Goal: Handle bundles of cables routed together, with simple arrangement and orientation control.
 
 ### Requirements
-- [ ] **Bundle object**: Create a bundle Document Object containing member cables and a collection of independent straight bundle segments
+- [x] **Harness object**: Create a harness Document Object containing a collection of independent straight bundle segments, member cables and the computed cable layout
 - [x] **Bundle segments**: Define every bundle segment by start/end point references (same reference types as M1); bundle segments have no bi-arcs or physical interconnections and each provides a pickable cylindrical display geometry
 - [x] **Mixed wire routing**: Give each cable an ordered route that can mix precise point-to-point segments (M1 style) with bundle-segment references; a bundle segment picked as start runs normal, picked as end runs reversed, and routes may use subsets of the bundle and branch in/out
 - [x] **Pickable bundle segments**: Pick bundle segment cylinders for a wire segment start or end instead of entering point endpoints; picking auto-fills the other node from the bundle segment (start runs normal, end runs reversed)
 - [x] **Wire-level bi-arcs**: Generate transitions between consecutive route pieces with the M1 bi-arc solver; the bundle itself remains straight segments only
-- [ ] **Place cables side by side**: For each bundle segment, arrange routed cables next to each other with a definable gap
-- [ ] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters
+- [x] **Place cables side by side**: For each bundle segment, arrange routed cables next to each other with a definable gap
+- [x] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters
 - [ ] **Cable ordering**: For each segment, cable order is editable
-- [ ] **Per-segment orientation**: Rotation of the cable arrangement about the bundle segment axis is user-definable per segment
+- [x] **Per-segment orientation**: Rotation of the cable arrangement about the bundle segment axis is user-definable per segment
 - [x] **Bundle segment display**: Show pickable cylinder geometry for each bundle segment (with a configurable preview radius)
 - [ ] **Arrangement display**: Show the per-segment cable order/arrangement once cables are routed
-- [ ] **Recompute**: Update affected cable routes/geometry when segment point references, route direction, arrangement, orientation or cable diameters change
+- [x] **Recompute**: Update affected cable routes/geometry when segment point references, route direction, cable order, gap or cable diameters change
 
 ### Technical Details (M2)
-- **Bundle object**: `WireBundle` Document Object with a `Cables` link list and a `Segments` link list of `WireBundleSegment` objects. It does not build a connected path.
+- **Harness object**: `WireHarness` Document Object with a `Segments` link list of `WireBundleSegment` objects, a `CableOrder` string list, a `Gap`, and a computed `Layout` map. It does not build a connected path. Member cables are discovered through `harness.InList` (cables link `cable.Harness`); the harness must not store cable links, to avoid dependency cycles.
 - **Bundle segments**: Each `WireBundleSegment` is an independent straight segment defined by `Start` and `End` point references using the M1 point-reference types. It has no link to neighbouring segments and therefore no bi-arcs. Each segment also exposes a pickable cylinder aligned with its axis for 3D selection; its radius can be a configurable preview or derived from the per-segment arrangement.
 - **Wire route (current)**: Each wire row has a start and end node; either node may be a point reference or a `WireBundleSegment`. A bundle segment picked as start contributes its normal run (`Start` -> `End`); picked as end it contributes its reversed run (`End` -> `Start`). Mixed rows expand into route pieces (bundle runs plus direct connections), and a route containing only point nodes is the M1 standalone cable.
 - **Picking and direction**: The wire panel start/end pickers accept point references and bundle segment cylinders. Picking a bundle cylinder into an empty start/end slot auto-fills the other node with the segment's `End` reference, so one pick defines a complete run: start uses the segment normal (`Start` -> `End`), end uses it reversed (`End` -> `Start`). If both slots are already set, they form a mixed route between the chosen nodes; explicit per-entry direction toggles can be added later.
-- **Segment frame**: For a segment axis `u = normalize(end - start)`, construct a stable perpendicular basis (`n0`, `b0`) with a fallback when `u` is parallel to the global Z axis, then apply the segment's per-segment orientation/roll. The cable arrangement is placed in that cross-section.
-- **Arrangement**: For each segment, build the ordered list of routed cables (global order plus per-segment overrides). Place cable centres along the arrangement axis using edge-to-edge spacing `r_i + gap + r_(i+1)`, where `r_i` is the cable radius. Centre the row on the bundle segment axis (multiple rows can be a later extension).
-- **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. Normal direction: `start = segment.start + offset`, `end = segment.end + offset`, tangent `+u`. Reversed direction: `start = segment.end + offset`, `end = segment.start + offset`, tangent `-u`.
+- **Segment frame**: For a segment axis `u = normalize(end - start)`, derive a lateral axis from the averaged global coordinate frames of the `Start`/`End` references (local Z, then Y/X fallbacks), then apply the segment's `Orientation` angle about `u`. This preserves rotations of the driving LCS/App::Part/Body frames, with manual roll composed on top. The cable uses the same lateral axis for its lane offset.
+- **Arrangement (current)**: For each segment, filter the ordered member cables to those using that segment and place their centres along a lateral axis using edge-to-edge spacing `r_i + gap + r_(i+1)`. The row is centred on the bundle segment axis. The harness stores offsets in `Layout` keyed by `segmentName|cableName`; per-segment order overrides and 2D rows can be added later.
+- **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. The cable reads its offset from `cable.Harness.Layout` and shifts both endpoints by `side * offset`, using the same stable lateral axis as the harness. Normal direction: `start = segment.start + shift`, `end = segment.end + shift`, tangent `+u`. Reversed direction: `start = segment.end + shift`, `end = segment.start + shift`, tangent `-u`.
 - **Bi-arc generation**: Resolve every route row into ordered route pieces (bundle runs plus direct connections). Feed the pieces to the M1 `WireCreator`, which inserts bi-arcs between consecutive pieces; gaps and reversals are handled at cable level, not bundle level.
 - **Branching**: A cable may route over any ordered subset of bundle segments. Per-segment member lists are derived from the cables' routes, so cables can join or leave the bundle between segments without changing the bundle segment definitions.
-- **Geometry/recompute**: Bundle segment point references, arrangement order, orientation, gap and cable dimensions create dependencies. Bundle segments and cables also keep hidden ancestor-group dependencies so moving an enclosing `App::Part`/Body recomputes them; recomputing the document rebuilds affected cable paths, sweeps and bend/length validations from the current segment placements and routes.
-- **UI**: Bundle editor for adding/removing segments, picking start/end references, setting gap and per-segment orientation/order. Cable route editor for adding point-pair entries or picking bundle segment cylinders, with reordering and branching; direction is implied by the start/end slot (start normal, end reversed). Display pickable segment cylinders and the per-segment arrangement.
+- **Geometry/recompute**: The harness is upstream of its cables: cables link `cable.Harness`, while the harness finds cables through `InList` and never links them. Harness layout depends on segment geometry and cable order/gap/diameter; cable changes touch the harness explicitly. Segments and cables also keep hidden ancestor-group dependencies so moving an enclosing `App::Part`/Body recomputes them. Recomputing follows segments -> harness layout -> cables -> paths/sweeps/validation.
+- **UI**: Harness editor for adding/removing segments, picking start/end references and setting the cable gap. Cable route editor for adding point-pair entries or picking bundle segment cylinders, with reordering and branching; direction is implied by the start/end slot (start normal, end reversed). The harness claims its segments and cable groups in the tree; per-segment order/orientation UI remains future work.
 - **Integration**: Use the same point-reference model as M1 so bundle segments can be driven by PartDesign/Assembly geometry and standard placement gizmos.
 
 ### Acceptance Criteria
-- Can create a bundle containing multiple independent straight segments
+- Can create a harness containing multiple independent straight segments
 - Bundle segments are defined by start/end references and have no bundle-level bi-arcs or forced interconnections
 - Can assign a cable to an ordered mixed route of direct segments and bundle segments with `Normal`/`Reversed` directions
 - Can pick a bundle segment cylinder as a wire start (normal) or end (reversed), with the other node auto-filled from the segment
@@ -144,9 +144,11 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - Bi-arcs are generated at the cable level between consecutive route pieces, including direct/bundle transitions
 - Cables are placed side by side on each segment with a definable gap
 - Gap is consistent between cables regardless of different diameters
+- The harness computes lane offsets and cables read them from the harness
+- Cable changes (route, diameter, harness membership) invalidate and recompute the harness layout
 - Cable order per segment is editable
 - Per-segment arrangement orientation can be set and changed
-- Updating segment references, routes, order, orientation, gap or diameters recomputes affected cable geometry
+- Updating segment references, routes, order, gap or diameters recomputes affected cable geometry
 
 ## Future Milestones (High-level)
 - **M3**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)

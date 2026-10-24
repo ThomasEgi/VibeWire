@@ -23,9 +23,9 @@ class WirePluginWorkbench(FreeCADGui.Workbench):
         import freecad.WirePlugin.WirePluginCmd  # noqa: F401
 
         wire_cmds = ["WirePlugin_CreateWire"]
-        bundle_cmds = ["WirePlugin_DefineBundle"]
+        bundle_cmds = ["WirePlugin_DefineHarness"]
         self.appendToolbar("Wire", wire_cmds)
-        self.appendToolbar("Bundle", bundle_cmds)
+        self.appendToolbar("Harness", bundle_cmds)
         self.appendMenu("WirePlugin", wire_cmds + bundle_cmds)
         self._initialized = True
 
