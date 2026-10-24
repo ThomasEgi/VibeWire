@@ -47,31 +47,38 @@ Goal: Test core functions programmatically before integrating into FreeCAD UI/wo
 Goal: Get the core model working for a single cable before handling bundles/multi-cable logic.
 
 ### Requirements
-- [ ] **Plugin structure**: FreeCAD addon structure, registration, workbench stub
-- [ ] **Basic UI**: Simple toolbar/commands to create/edit a cable route
-- [ ] **Cable object**: Custom FreeCAD Document Object for a single cable
-- [ ] **Segment model**: Represent chain of segments with start/end points in order
-- [ ] **Segment manipulation**: Add/remove/reorder segments; edit segment start/end points
-- [ ] **Bi-arc connections**: Define/connect segments with bi-arcs (concept + basic implementation)
-- [ ] **Geometry generation**: From segment chain (with bi-arcs) generate circular profile along path for a single cable
-- [ ] **ViewProvider**: Visualize cable in 3D view
-- [ ] **Integration**: Work well with PartDesign and Assembly workbenches
-- [ ] **Connector linking**: Link cable start and/or end points to existing geometry (connectors/parts/features) so they load/attach to those locations
-- [ ] **Cable diameter**: Cable diameter must be a user definable parameter
-- [ ] **Minimum bending radius**: Minimum bending radius must be a user definable parameter per cable
-- [ ] **Bend radius warning**: Throw a warning if the routed path violates the minimum bending radius
-- [ ] **Length calculation**: Calculate and display the total cable length
+- [x] **Plugin structure**: FreeCAD addon structure, registration, workbench stub
+- [x] **Basic UI**: Simple toolbar/commands to create/edit a cable route
+- [x] **Cable object**: Custom FreeCAD Document Object for a single cable, storing its segment references and geometry parameters
+- [x] **Segment model**: Represent chain of segments with start/end points in order
+- [x] **Segment manipulation**: Add/remove/reorder segments; edit segment start/end points
+- [x] **Edit existing cable**: Double-click a created cable in the tree to reopen the segment editor with its stored segments and parameters; apply changes to the same cable instead of creating a new one
+- [x] **Recompute on input changes**: Recompute path and cable geometry automatically when referenced coordinate systems or linked geometry move, plus a manual recompute option
+- [x] **Bi-arc connections**: Define/connect segments with bi-arcs (concept + basic implementation)
+- [x] **Geometry generation**: From segment chain (with bi-arcs) generate circular profile along path for a single cable
+- [x] **ViewProvider**: Visualize cable in 3D view
+- [x] **Integration**: Work well with PartDesign and Assembly workbenches
+- [x] **Connector linking (initial)**: Link cable start/end points to existing geometry by placing connector geometry under the same App::Part as the referenced segment point; a dedicated connector-attachment workflow can follow later
+- [x] **Cable diameter**: Cable diameter must be a user definable parameter
+- [x] **Minimum bending radius**: Minimum bending radius must be a user definable parameter per cable
+- [x] **Bend radius warning**: Throw a warning if the routed path violates the minimum bending radius
+- [x] **Length calculation**: Calculate and display the total cable length
+- [x] **Wire naming**: User can enter a wire name; empty names auto-fill as `wire_<first start>_<last end>` using the point-reference labels
 
 ### Technical Details (M1)
 - **Objects**: `WireCable` (or `Cable`) Document Object with a property storing ordered list of segments
 - **Segment representation**: Each segment = `{start: Vector, end: Vector, ...}`; chain is ordered list; connections use bi-arcs between consecutive segments
-- **Coordinate systems**: Segment start/end points must be definable with an offset within a chosen coordinate system. Points can be relative to global, local object, sketch/attachment, or selected reference (to integrate with PartDesign/Assembly).
+- **Persistent cable data**: Store the ordered segment/point references (coordinate systems, Std_Part origins, Parts/Bodies), diameter and minimum bend radius as properties on the cable object so the route survives closing the editor and saving/reloading the document
+- **Point references**: Segment start/end points must be definable with an offset within a chosen reference. Supported references include Part/PartDesign coordinate systems, Std_Part origins, and Part/Body placements. Points can be relative to global, local object, sketch/attachment, or selected reference (to integrate with PartDesign/Assembly).
 - **Positioning**: Use FreeCAD's existing positioning gizmos/transform/menu (Placement, Attachment/Map Mode, and standard transform handles) rather than custom drag logic. Allow editing placement/offset via the same UI FreeCAD uses for uniform workflow.
-- **Connector linking**: Allow selecting geometry (vertex/face/edge/feature/object) in PartDesign/Assembly and linking it to cable start or end point. When linked, the endpoint's position is driven by that geometry (with optional offset). Handle updates when linked geometry moves.
+- **Edit existing cable**: The cable ViewProvider exposes double-click (and an edit command) that reopens the segment editor prefilled from the cable's stored data. Edits update the existing cable object and its geometry in place; no duplicate path/cable objects.
+- **Recompute/dependencies**: Reference coordinate systems and linked geometry through link properties so `Document.recompute()` re-evaluates the cable. The cable's `execute()` rebuilds path and swept geometry from current input placements. Provide a manual "Recompute Wire" fallback.
+- **Connector linking**: Allow selecting geometry (vertex/face/edge/feature/object) in PartDesign/Assembly and linking it to cable start or end point. When linked, the endpoint's position is driven by that geometry (with optional offset). Handle updates when linked geometry moves. Current initial approach: place connector geometry under the same App::Part as the referenced segment point, so it moves with that point.
 - **Cable diameter**: A user-definable parameter (e.g., `Diameter` property) for the cable/circular profile. Geometry generation must use this diameter.
 - **Minimum bending radius**: A user-definable parameter (e.g., `MinBendRadius` property). Used for validation/warnings.
 - **Bend radius checking**: Compute bend radius along the path (bi-arcs/arcs) and warn if any bend radius < MinBendRadius. Warnings visible in UI/property/status.
 - **Length calculation**: Compute total length along the path defined by segment chain + bi-arcs (including arc lengths). Display in UI/property (e.g., read-only property or panel display).
+- **Naming**: Provide a name field. When left empty, generate `wire_<first start label>_<last end label>` from the first start and last end references; use the same sanitized string as the internal object name.
 - **Commands/UI**: Create cable, edit route (add/move segment endpoints, reorder segments), link/unlink connector to start/end, update geometry, set diameter/MinBendRadius, view total length and bend warnings. Integrate commands into workbench toolbar; leverage FreeCAD selection/attachment.
 - **Geometry**: Sweep circle along the path defined by segment chain + bi-arcs to get cable body
 - **Workbench**: Minimal workbench with commands for M1 operations, compatible with PartDesign/Assembly contexts
@@ -82,14 +89,18 @@ Goal: Get the core model working for a single cable before handling bundles/mult
 - Segment endpoints can be definable with offset in a chosen coordinate system (global/local/attached)
 - Moving segment endpoints uses FreeCAD's existing positioning gizmos/transform UI
 - Can add/remove/reorder segments and move segment endpoints
+- Can double-click a created cable to reopen the segment editor with its current segments and parameters
+- Applying editor changes updates the same cable object and its geometry without creating duplicates
+- Moving a referenced coordinate system updates the cable geometry on document recompute
 - Consecutive segments connect via bi-arcs
 - Cable diameter is user definable and used for geometry generation
 - Minimum bending radius is user definable
 - Warning is displayed if routed path violates minimum bending radius
-- Can link cable start/end to existing geometry (connector) and cable attaches to it (with offset support)
+- Can link cable start/end to existing geometry (connector); initial approach uses the App::Part placement of the referenced segment point
 - Linked endpoints update when referenced geometry changes position
 - Cable geometry (circular cross-section along path) is generated/updated from segment chain
 - Total cable length is calculated along the path and displayed
+- Wires have an identifiable `wire_<start>_<end>` name, auto-generated from the first start and last end when no name is entered
 - Basic UI to perform these operations works alongside PartDesign/Assembly workflows
 
 ## Milestone 2: Basic Bundle Handling (Focus)
@@ -123,11 +134,18 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 
 ## Future Milestones (High-level)
 - **M3**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)
-- **M4**: Pathfinding/obstacle avoidance, properties (gauge/color), length, BOM, discrete cable lengths, wire loops
+- **M4**: Pathfinding/obstacle avoidance, properties (gauge/color), length, BOM, discrete cable lengths, wire loops, cable-clip placeholders, connector lengths, wire endpoint presets, stripped tips/ferrules, flat ribbon cable routing, foamboard manufacturing plans
 - **M5**: Polish, docs, packaging
 
 ## Milestone 4: Optional/Advanced Features (Notes)
 - [ ] **Discrete cable lengths**: Option to specify a cable length (for high-speed cables sold in discrete lengths). Track/flag if routed length differs from specified discrete length.
 - [ ] **Wire loops / service loops**: Feature to create wire loops to neatly store extra cable (add slack/loops in route). Configurable loop size/shape.
+- [ ] **Cable clip / mounting point placeholders**: Automatically place placeholder objects along the wire length using configurable minimum and maximum spacing so clips or mounting points can be added easily. Segment start and end points are always included; placeholders update when the route changes.
+- [ ] **Connector lengths and total cable length**: Allow entering a connector length for both cable ends. Track the cable-only length separately from the total length including connectors, with distinct names such as `CableLength` (path only) and `TotalLengthWithConnectors` (path + both connector lengths), so the value can be matched against cable ordering specifications that include connector length.
+- [ ] **Connector-length drawing (documentation)**: Add an annotated drawing showing an actual cable and what each length number represents: cable-only length, start connector length, end connector length, and total length including connectors.
+- [ ] **Foamboard manufacturing plan**: Translate the cable harness into a flat foamboard layout for physical assembly. Show routes, labels, lengths, connector endpoints, and mounting/clip positions, with configurable scale and printable/exportable output (e.g. SVG/DXF, tiled sheets for large boards).
+- [ ] **Wire endpoint / conductor editor**: Dedicated menu for editing wire endpoints with presets for US AWG gauge and metric cross-section area, conductor construction (solid, stranded, fine-stranded) for small dimensional variations, and typical insulation thickness. Derive conductor and outer diameters so the swept geometry is dimensionally correct.
+- [ ] **Stripped tips and ferrules**: Automatically generate the smaller core-only tip at each wire endpoint with configurable strip length, and optionally generate ferrule geometry (length/diameter/color by wire size) for connector-ready ends.
+- [ ] **Flat ribbon cable routing**: Dedicated routing approach for flat ribbon cable with multiple parallel conductors. Constrain bending to one axis, prevent in-plane twisting, support folds (including reverse folds), and generate ribbon width/thickness plus conductor geometry using a fold-aware path model.
 - [ ] **Pathfinding/obstacle avoidance**
 - [ ] **Properties (gauge/color)**, **BOM**

@@ -25,9 +25,6 @@ exec(open("/home/mx/opencaudetest/wireplugin/test_wirecreator_both.py").read())
 exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 ```
 
-### Run WireCreator test (plugin test button)
-The plugin's "Run WireCreator Test" command executes `test_wirecreator.py` and prints results for two test segment sets (good and failure cases).
-
 ## Architecture Notes
 
 ### Core Module: WireCreator.py
@@ -49,11 +46,23 @@ The module provides a `WireCreator` class with these main operations:
 - Uses `Part.Wire.makePipeShell` to sweep profile along path
 - Supports Frenet frame for following curvature (default `USE_FRENET=True`)
 
+### Cable Object
+- `WireCable.py` defines a persistent `Part::FeaturePython` cable object
+- `Points` (`App::PropertyLinkList`) stores ordered start/end point references (coordinate systems, Std_Part origins, Parts/Bodies)
+- `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
+- `Diameter`, `MinBendRadius`, `Length`, `MinimumRadius`, `Status` are stored as properties
+- `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
+- Linked objects create dependencies, so a document recompute updates moved inputs
+- Double-click opens `WireTaskPanel` prefilled with the stored route; edits update the same object
+- Path and bad-arc helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`
+- Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
+
 ### Plugin Structure
-- Workbench: `WirePlugin` (registered via `Gui.addWorkbench()`)
-- Commands: `RunWireTestCommand`, `CreateCableCommand`
-- Installed in `FreeCAD_WirePlugin/` directory
-- `CableTaskPanel` provides UI for cable creation
+- Workbench: `WirePluginWorkbench` (registered via `FreeCADGui.addWorkbench()`)
+- Toolbar command: `WirePlugin_CreateWire`
+- `WireTaskPanel` provides the segment/point-reference editor and geometry controls
+- `WireCable` provides the persistent cable object and double-click editing
+- Installed in `freecad/WirePlugin/` inside the addon
 
 ## Setup Requirements
 
@@ -81,6 +90,13 @@ Scripts remove existing objects with prefix `PoC_`, `WireCreatorTests`, `Test_` 
 ### Coordinate System
 Segment start/end points can be defined in global coordinates or relative to a Placement/offset. The plugin uses FreeCAD's standard positioning gizmos for editing.
 
+### Selection Gate Cleanup
+- Pick mode installs a `Gui.Selection` gate and observer; always remove both after a pick and when the task panel is destroyed.
+- Selection-gate `allow()` can receive names or `Document`/`DocumentObject` instances; handle both forms.
+
+### Deletion Cleanup
+- Do not remove helper objects or the owning group synchronously inside a ViewProvider `onDelete`; FreeCAD's GUI command recorder can emit a truncated `removeObject(` command. Defer cleanup with `QtCore.QTimer.singleShot(0, ...)` using stored names.
+
 ## Conventions
 
 ### Naming
@@ -101,10 +117,13 @@ Segment start/end points can be defined in global coordinates or relative to a P
   - `biarc_total_len`, `chord_len`, `radius` (if available)
 
 ## References
-- `WireCreator.py` - core implementation
-- `poc_biarc_sweep.py` - demonstration with random segment generation
-- `test_wirecreator.py` - test suite with predefined segment sets
+- `freecad/WirePlugin/WireCreator.py` - core bi-arc/path/sweep implementation
+- `freecad/WirePlugin/WireCable.py` - persistent cable object, dependency recompute, ViewProvider
+- `freecad/WirePlugin/WireTaskPanel.py` - segment editor and geometry controls
+- `freecad/WirePlugin/WirePluginCmd.py` - toolbar commands
+- `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
+- `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets
 - `plan.md` - project milestones and terminology
 - `diary.md` - development log (minimal)
-- `snippet_archive` - contains some more or less isolated tests and classes which we may want to integrate into the actual plugin code at some point
+- `snippet_archive` - earlier isolated tests and classes kept for reference
 
