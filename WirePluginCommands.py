@@ -26,3 +26,31 @@ class RunWireTestCommand:
         return True
 
 Gui.addCommand('WirePlugin_RunTest', RunWireTestCommand())
+
+
+class CreateCableCommand:
+    def GetResources(self):
+        return {
+            'Pixmap': '',
+            'MenuText': 'Create Cable',
+            'ToolTip': 'Create cable from segments'
+        }
+
+    def Activated(self):
+        try:
+            import sys
+            import os
+            plugin_dir = os.path.dirname(__file__)
+            if plugin_dir not in sys.path:
+                sys.path.insert(0, plugin_dir)
+            from CableTaskPanel import CableTaskPanel
+            panel = CableTaskPanel()
+            Gui.Control.showDialog(panel)
+        except Exception as e:
+            from PySide import QtGui
+            QtGui.QMessageBox.critical(None, "Error", str(e))
+
+    def IsActive(self):
+        return True
+
+Gui.addCommand('WirePlugin_CreateCable', CreateCableCommand())

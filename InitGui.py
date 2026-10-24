@@ -12,8 +12,8 @@ class WirePluginWorkbench(Gui.Workbench):
         if plugin_dir not in sys.path:
             sys.path.insert(0, plugin_dir)
         import WirePluginCommands
-        self.appendToolbar("Wire Tools", ["WirePlugin_RunTest"])
-        self.appendMenu("WirePlugin", ["WirePlugin_RunTest"])
+        self.appendToolbar("Wire Tools", ["WirePlugin_CreateCable", "WirePlugin_RunTest"])
+        self.appendMenu("WirePlugin", ["WirePlugin_CreateCable", "WirePlugin_RunTest"])
 
     def Activated(self):
         pass
