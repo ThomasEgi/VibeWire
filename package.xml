@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+  <name>WirePlugin</name>
+  <description>Wire and Cable Routing Plugin</description>
+  <version>0.1.0</version>
+  <date>2026-10-24</date>
+  <maintainer email="test@test.com">test</maintainer>
+  <license file="LICENSE">LGPLv2.1</license>
+  <url type="repository">https://example.com</url>
+  <content>
+    <workbench>
+      <classname>WirePluginWorkbench</classname>
+    </workbench>
+  </content>
+</package>
