@@ -23,3 +23,8 @@
 - 2026-10-24: Added per-bundle-segment rotation (Orientation) applied to the harness lane axis, and migrated cable Points to PropertyLinkListGlobal to eliminate App::Part scope warnings.
 - 2026-10-24: Composed bundle-segment orientation from the driving reference coordinate systems: lane axis now uses the averaged start/end reference frames plus the manual segment roll.
 - 2026-10-24: Added circular/linear harness patterns with 2D lane offsets. The harness stores global offset vectors in Layout; circular places cables at equal angles on a clearance-based ring.
+- 2026-10-25: Added per-end cable tip objects: two WireTip settings objects in each cable group, double-click panel for length offsets, visual cable trimming, and separate Length/CableOnlyLength values.
+- 2026-10-25: Tip offsets are now capped by the end route-piece length, shown in the tip panel, and applied live while spinning; Cancel restores the previous offset.
+- 2026-10-25: Capped tip offsets at segment length minus 0.01 mm; offset == segment length previously removed the end piece and its adjacent bi-arcs.
+- 2026-10-25: Added tip types with stripped-wire cores: length offset vs stripped wire, stripped length, core diameter/area with mm/mm² unit selection and common 1.0/1.5/2.5 mm² presets, clamped by cable diameter, plus live panel updates.
+- 2026-10-25: Moved core size to the wire: CoreSizeMode/CoreArea/CoreDiameter live on WireCable and are shared by both tips; the tip panel edits the cable via InList without adding a dependency cycle.

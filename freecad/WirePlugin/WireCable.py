@@ -1,5 +1,6 @@
 """Persistent wire cable document object and view provider."""
 
+import math
 import os
 
 import FreeCAD as App
@@ -13,6 +14,7 @@ from .WireBundle import (
     segment_basis,
 )
 from .WireCreator import Segment, WireCreator
+from .WireTip import TIP_OFFSET_MARGIN, create_wire_tip
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 
@@ -50,6 +52,32 @@ class WireCableProxy:
                 "Cable diameter",
             )
             obj.Diameter = 4.0
+        if "CoreSizeMode" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "CoreSizeMode",
+                "Wire",
+                "Conductor core size input mode",
+            )
+            obj.CoreSizeMode = ["Diameter", "Area"]
+            obj.CoreSizeMode = "Area"
+        if "CoreArea" not in properties:
+            obj.addProperty(
+                "App::PropertyFloat",
+                "CoreArea",
+                "Wire",
+                "Conductor core cross-section in square millimetres",
+            )
+            obj.CoreArea = 1.0
+        if "CoreDiameter" not in properties:
+            obj.addProperty(
+                "App::PropertyLength",
+                "CoreDiameter",
+                "Wire",
+                "Conductor core diameter",
+            )
+            area = max(0.0, getattr(obj, "CoreArea", 1.0))
+            obj.CoreDiameter = 2.0 * math.sqrt(area / math.pi)
         if "MinBendRadius" not in properties:
             obj.addProperty(
                 "App::PropertyLength",
@@ -66,6 +94,12 @@ class WireCableProxy:
                 "Create the swept cable solid (otherwise only the path is built)",
             )
             obj.BuildCable = True
+        for name, description in (
+            ("StartTip", "Settings object for the cable start end"),
+            ("EndTip", "Settings object for the cable end"),
+        ):
+            if name not in properties:
+                obj.addProperty("App::PropertyLinkGlobal", name, "Tips", description)
         if "Length" not in properties:
             obj.addProperty(
                 "App::PropertyLength",
@@ -73,6 +107,23 @@ class WireCableProxy:
                 "Wire",
                 "Computed total path length",
             )
+        if "CableOnlyLength" not in properties:
+            obj.addProperty(
+                "App::PropertyLength",
+                "CableOnlyLength",
+                "Wire",
+                "Computed cable length excluding connector length offsets",
+            )
+        for name, description in (
+            ("StartTipLength", "Length of the first route piece available for the start tip"),
+            ("EndTipLength", "Length of the last route piece available for the end tip"),
+        ):
+            if name not in properties:
+                obj.addProperty("App::PropertyLength", name, "Tips", description)
+                try:
+                    obj.setEditorMode(name, 2)
+                except Exception:
+                    pass
         if "MinimumRadius" not in properties:
             obj.addProperty(
                 "App::PropertyLength",
@@ -102,6 +153,8 @@ class WireCableProxy:
             ("PathObject", "Object displaying the path"),
             ("BadRadiusObject", "Object displaying bends below the minimum radius"),
             ("BadLengthObject", "Object displaying bi-arcs over the length limit"),
+            ("StartCoreObject", "Object displaying the stripped core at the start"),
+            ("EndCoreObject", "Object displaying the stripped core at the end"),
         ):
             if name not in properties:
                 obj.addProperty("App::PropertyLink", name, "Wire", description)
@@ -177,22 +230,61 @@ class WireCableProxy:
             self._set_error(obj, "The route does not contain any segments.")
             return
 
+        start_tip_length = (segments[0].end - segments[0].start).Length
+        end_tip_length = (segments[-1].end - segments[-1].start).Length
+        obj.StartTipLength = start_tip_length
+        obj.EndTipLength = end_tip_length
+
         creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
         try:
-            wire = creator.create_wire(segments)
+            full_wire = creator.create_wire(segments)
         except Exception as error:
             self._set_error(obj, str(error))
             return
 
+        start_settings = self._tip_settings(obj, "StartTip", start_tip_length)
+        end_settings = self._tip_settings(obj, "EndTip", end_tip_length)
+        start_offset = start_settings["trim"]
+        end_offset = end_settings["trim"]
+        geometry_creator = creator
+        geometry_wire = full_wire
+        if start_offset > 0.0 or end_offset > 0.0:
+            trimmed = self._trim_route(segments, start_offset, end_offset)
+            if not trimmed:
+                self._set_error(
+                    obj, "Tip length offsets exceed the cable route length."
+                )
+                return
+            geometry_creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
+            try:
+                geometry_wire = geometry_creator.create_wire(trimmed)
+            except Exception as error:
+                self._set_error(obj, str(error))
+                return
+
         path_obj = obj.PathObject
         if _is_valid(path_obj, obj.Document):
-            _set_shape(path_obj, wire)
+            _set_shape(path_obj, geometry_wire)
 
         if obj.BuildCable:
-            cable = creator.make_cable(wire, diameter=obj.Diameter.Value)
+            cable = geometry_creator.make_cable(
+                geometry_wire, diameter=obj.Diameter.Value
+            )
             obj.Shape = cable if cable is not None else Part.Shape()
+            start_core_shape = self._make_core(segments[0], start_settings, True)
+            end_core_shape = self._make_core(segments[-1], end_settings, False)
         else:
             obj.Shape = Part.Shape()
+            start_core_shape = Part.Shape()
+            end_core_shape = Part.Shape()
+
+        for property_name, shape in (
+            ("StartCoreObject", start_core_shape),
+            ("EndCoreObject", end_core_shape),
+        ):
+            link = getattr(obj, property_name, None)
+            if _is_valid(link, obj.Document):
+                _set_shape(link, shape)
 
         bad_results = creator.check_wire()
         radius_shapes = []
@@ -208,9 +300,19 @@ class WireCableProxy:
         self._set_bad_shapes(obj, radius_shapes, length_shapes)
 
         length, minimum_radius = creator.measure()
+        cable_length = max(
+            0.0,
+            length
+            - start_settings["connector"]
+            - end_settings["connector"],
+        )
         obj.Length = length
+        obj.CableOnlyLength = cable_length
         obj.MinimumRadius = minimum_radius if minimum_radius is not None else 0.0
-        status = f"Path length: {length:.2f} mm"
+        status = (
+            f"Total length: {length:.2f} mm | "
+            f"Cable-only length: {cable_length:.2f} mm"
+        )
         if minimum_radius is None:
             status += " | Minimum bend radius: none"
         else:
@@ -218,6 +320,107 @@ class WireCableProxy:
         if bad_results:
             status += f" | WARNING: {len(bad_results)} bad bi-arc edge(s)"
         obj.Status = status
+
+    @staticmethod
+    def _core_diameter(cable, maximum):
+        try:
+            if getattr(cable, "CoreSizeMode", "Area") == "Diameter":
+                diameter = cable.CoreDiameter.Value
+            else:
+                area = max(0.0, cable.CoreArea)
+                diameter = 2.0 * math.sqrt(area / math.pi)
+        except Exception:
+            diameter = 0.0
+        return min(max(0.0, diameter), max(0.0, maximum))
+
+    @classmethod
+    def _tip_settings(cls, cable, property_name, maximum_length):
+        settings = {
+            "trim": 0.0,
+            "connector": 0.0,
+            "strip": False,
+            "core_diameter": 0.0,
+        }
+        tip = getattr(cable, property_name, None)
+        if not _is_valid(tip, cable.Document):
+            return settings
+        limit = max(0.0, maximum_length - TIP_OFFSET_MARGIN)
+        tip_type = getattr(tip, "TipType", "Length offset")
+        try:
+            if tip_type == "Stripped wire":
+                settings["trim"] = min(
+                    max(0.0, tip.StrippedLength.Value), limit
+                )
+                settings["strip"] = True
+                settings["core_diameter"] = cls._core_diameter(
+                    cable, cable.Diameter.Value
+                )
+            else:
+                settings["trim"] = min(
+                    max(0.0, tip.LengthOffset.Value), limit
+                )
+                settings["connector"] = settings["trim"]
+        except Exception:
+            pass
+        return settings
+
+    @staticmethod
+    def _make_core(segment, settings, at_start):
+        trim = settings["trim"]
+        diameter = settings["core_diameter"]
+        if not settings["strip"] or trim <= 0.0 or diameter <= 0.0:
+            return Part.Shape()
+        direction = segment.end - segment.start
+        length = direction.Length
+        if length < 1e-9:
+            return Part.Shape()
+        direction = direction / length
+        base = segment.start if at_start else segment.end - direction * trim
+        return Part.makeCylinder(diameter / 2.0, trim, base, direction)
+
+    @staticmethod
+    def _trim_route(segments, start_offset, end_offset):
+        trimmed = [Segment(item.start, item.end) for item in segments]
+
+        remaining = start_offset
+        while trimmed and remaining > 1e-12:
+            segment = trimmed[0]
+            length = (segment.end - segment.start).Length
+            if length < 1e-12:
+                trimmed.pop(0)
+                continue
+            if remaining >= length:
+                remaining -= length
+                trimmed.pop(0)
+            else:
+                direction = (segment.end - segment.start) / length
+                trimmed[0] = Segment(
+                    segment.start + direction * remaining, segment.end
+                )
+                remaining = 0.0
+
+        remaining = end_offset
+        while trimmed and remaining > 1e-12:
+            segment = trimmed[-1]
+            length = (segment.end - segment.start).Length
+            if length < 1e-12:
+                trimmed.pop()
+                continue
+            if remaining >= length:
+                remaining -= length
+                trimmed.pop()
+            else:
+                direction = (segment.end - segment.start) / length
+                trimmed[-1] = Segment(
+                    segment.start, segment.end - direction * remaining
+                )
+                remaining = 0.0
+
+        return [
+            item
+            for item in trimmed
+            if (item.end - item.start).Length >= 1e-9
+        ]
 
     @staticmethod
     def _bundle_offset(cable, bundle_segment):
@@ -283,10 +486,18 @@ class WireCableProxy:
         path_obj = obj.PathObject
         if _is_valid(path_obj, obj.Document):
             _set_shape(path_obj, Part.Shape())
-        for link in (obj.BadRadiusObject, obj.BadLengthObject):
+        for link in (
+            obj.BadRadiusObject,
+            obj.BadLengthObject,
+            getattr(obj, "StartCoreObject", None),
+            getattr(obj, "EndCoreObject", None),
+        ):
             if _is_valid(link, obj.Document):
                 _set_shape(link, Part.Shape())
         obj.Length = 0.0
+        obj.CableOnlyLength = 0.0
+        obj.StartTipLength = 0.0
+        obj.EndTipLength = 0.0
         obj.MinimumRadius = 0.0
         obj.Status = f"Error: {message}"
 
@@ -377,7 +588,15 @@ class ViewProviderWireCable:
         document_name = document.Name
         support_names = [
             link.Name
-            for link in (obj.PathObject, obj.BadRadiusObject, obj.BadLengthObject)
+            for link in (
+                obj.PathObject,
+                obj.BadRadiusObject,
+                obj.BadLengthObject,
+                getattr(obj, "StartCoreObject", None),
+                getattr(obj, "EndCoreObject", None),
+                getattr(obj, "StartTip", None),
+                getattr(obj, "EndTip", None),
+            )
             if _is_valid(link, document)
         ]
         group_name = group.Name if _is_valid(group, document) else None
@@ -496,6 +715,54 @@ def find_container(cable):
     return None
 
 
+def ensure_core_properties(cable):
+    """Ensure wire-level core-size properties and migrate old tip values."""
+    properties = cable.PropertiesList
+    if "CoreSizeMode" not in properties:
+        cable.addProperty(
+            "App::PropertyEnumeration",
+            "CoreSizeMode",
+            "Wire",
+            "Conductor core size input mode",
+        )
+        cable.CoreSizeMode = ["Diameter", "Area"]
+        cable.CoreSizeMode = "Area"
+    if "CoreArea" not in properties:
+        cable.addProperty(
+            "App::PropertyFloat",
+            "CoreArea",
+            "Wire",
+            "Conductor core cross-section in square millimetres",
+        )
+        cable.CoreArea = 1.0
+    if "CoreDiameter" not in properties:
+        cable.addProperty(
+            "App::PropertyLength",
+            "CoreDiameter",
+            "Wire",
+            "Conductor core diameter",
+        )
+        cable.CoreDiameter = 2.0 * math.sqrt(max(0.0, cable.CoreArea) / math.pi)
+
+    for property_name in ("StartTip", "EndTip"):
+        tip = getattr(cable, property_name, None)
+        if not _is_valid(tip, cable.Document):
+            continue
+        if "CoreArea" in tip.PropertiesList:
+            try:
+                cable.CoreSizeMode = tip.CoreSizeMode
+                cable.CoreArea = tip.CoreArea
+                cable.CoreDiameter = tip.CoreDiameter
+            except Exception:
+                pass
+        for name in ("CoreSizeMode", "CoreArea", "CoreDiameter"):
+            if name in tip.PropertiesList:
+                try:
+                    tip.removeProperty(name)
+                except Exception:
+                    pass
+
+
 def ensure_support_objects(cable):
     """Create the path and bad-arc display objects if they are missing."""
     document = cable.Document
@@ -520,6 +787,28 @@ def ensure_support_objects(cable):
     bad_length = ensure(
         "BadLengthObject", "Part::Feature", "WireBadLength", "Bad Bends (Length)"
     )
+    start_core = ensure(
+        "StartCoreObject", "Part::Feature", "WireStartCore", "Start Core"
+    )
+    end_core = ensure("EndCoreObject", "Part::Feature", "WireEndCore", "End Core")
+
+    def ensure_tip(property_name, end, name, label):
+        tip = getattr(cable, property_name)
+        if _is_valid(tip, document):
+            if "End" in tip.PropertiesList:
+                tip.End = end
+            return tip
+        tip = create_wire_tip(document, end, name=name, label=label)
+        setattr(cable, property_name, tip)
+        if container is not None:
+            container.addObject(tip)
+        return tip
+
+    ensure_tip(
+        "StartTip", "Start", "WireStartTip", f"{cable.Label} Start Tip"
+    )
+    ensure_tip("EndTip", "End", "WireEndTip", f"{cable.Label} End Tip")
+    ensure_core_properties(cable)
 
     try:
         path_obj.ViewObject.LineColor = (0.85, 0.1, 0.1)
@@ -533,16 +822,34 @@ def ensure_support_objects(cable):
         bad_length.ViewObject.Transparency = 0
     except Exception:
         pass
+    try:
+        start_core.ViewObject.ShapeColor = (0.8, 0.45, 0.2)
+        start_core.ViewObject.Transparency = 0
+        end_core.ViewObject.ShapeColor = (0.8, 0.45, 0.2)
+        end_core.ViewObject.Transparency = 0
+    except Exception:
+        pass
 
     return path_obj, bad_radius, bad_length
 
 
 def rename_cable(cable, label):
-    """Set the cable label and keep its owning group label in sync."""
+    """Set the cable label and keep its owning group and tips in sync."""
     cable.Label = label
     group = find_container(cable)
     if _is_valid(group, cable.Document):
         group.Label = f"{label} Group"
+    for property_name, end in (("StartTip", "Start"), ("EndTip", "End")):
+        tip = getattr(cable, property_name, None)
+        if _is_valid(tip, cable.Document):
+            tip.Label = f"{label} {end} Tip"
+    for property_name, end in (
+        ("StartCoreObject", "Start"),
+        ("EndCoreObject", "End"),
+    ):
+        core = getattr(cable, property_name, None)
+        if _is_valid(core, cable.Document):
+            core.Label = f"{label} {end} Core"
 
 
 def create_wire_cable(

@@ -52,7 +52,9 @@ The module provides a `WireCreator` class with these main operations:
 - A bundle segment in a start slot contributes its normal run (`Start` -> `End`); in an end slot it contributes its reversed run (`End` -> `Start`). Picking a bundle segment into an empty slot auto-fills the other node from the segment's `End` reference. `WireCable.execute()` expands each pair into route pieces before calling `WireCreator`
 - `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
 - `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes this cable's lane offsets
-- `Diameter`, `MinBendRadius`, `Length`, `MinimumRadius`, `Status` are stored as properties
+- `Diameter`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` are stored as properties
+- Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
+- `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
 - Cable changes to `Points`, `Diameter` or `Harness` touch the harness so the lane layout is recalculated upstream
 - `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
 - Linked objects create dependencies, so a document recompute updates moved inputs
@@ -60,6 +62,15 @@ The module provides a `WireCreator` class with these main operations:
 - Path and bad-arc helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`
 - `Dependencies` (`App::PropertyLinkListGlobal`) stores ancestor GeoFeatureGroups of the point references so moving an enclosing `App::Part`/Body recomputes the cable
 - Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
+
+### Cable Tip Object
+- `WireTip.py` defines `WireTip` (`App::FeaturePython`) with `TipType` (`Length offset`/`Stripped wire`), `LengthOffset`, `StrippedLength` and `End` (`Start`/`End`)
+- Tips are created in the owning cable group and linked from the cable through `StartTip`/`EndTip`
+- Tips do not link back to the cable; they find it through `InList`
+- Double-click a tip to open `WireTipTaskPanel`; core size lives on the cable and applies to both tips. Ferrule and expanded conductor presets can be added there later
+- Cable geometry is trimmed from the route ends by the tip settings; `Length` remains full and `CableOnlyLength` subtracts only connector-style length offsets (stripped conductor keeps the cable length)
+- `LengthOffset`/`StrippedLength` are capped to just below the first/last route-piece length (`StartTipLength`/`EndTipLength` minus `TIP_OFFSET_MARGIN` = 0.01 mm); the tip panel applies changes live and restores the previous values on cancel
+- Stripped-wire tips set the outer cable back by `StrippedLength`; `StartCoreObject`/`EndCoreObject` display copper-colored core cylinders along the end pieces, clamped to the cable diameter
 
 ### Harness Object
 - `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
@@ -142,7 +153,9 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/WireTaskPanel.py` - segment editor and geometry controls
 - `freecad/WirePlugin/WirePluginCmd.py` - toolbar commands
 - `freecad/WirePlugin/WireBundle.py` - harness layout, segment objects and cylinder visualization
-- `freecad/WirePlugin/WireBundleTaskPanel.py` - harness segment/gap editor
+- `freecad/WirePlugin/WireBundleTaskPanel.py` - harness segment/gap/pattern editor
+- `freecad/WirePlugin/WireTip.py` - per-end cable tip settings object
+- `freecad/WirePlugin/WireTipTaskPanel.py` - cable tip settings editor
 - `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers
 - `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
 - `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets
