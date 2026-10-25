@@ -22,16 +22,14 @@ from .WireCable import (
     update_cable_dependencies,
 )
 from .PointReference import (
-    POINT_REFERENCE_TYPES,
     ClickableLabel,
     PickObserver,
     PointReferenceGate,
 )
-from .WireCreator import Segment
 
 
 class WireTaskPanel:
-    """Define an ordered list of segments by picking their start/end points."""
+    """Define an ordered list of bundle segments."""
 
     def __init__(self, cable=None):
         self.segments = []
@@ -61,11 +59,9 @@ class WireTaskPanel:
         layout.addLayout(name_form)
 
         hint = QtGui.QLabel(
-            "Add segments and pick a start/end reference. Pick a point "
-            "reference (coordinate system, Std_Part origin, Part/Body) or a "
-            "bundle segment cylinder. Picking a bundle segment collects its "
-            "other endpoint automatically; as start it runs normal, as end it "
-            "runs reversed."
+            "Add segments and pick a bundle segment for each. Each route "
+            "segment follows its bundle segment from Start to End; use Reverse "
+            "Segment to flip its direction."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -78,7 +74,7 @@ class WireTaskPanel:
         self.btn_remove = QtGui.QPushButton("Remove Segment")
         self.btn_up = QtGui.QPushButton("Move Up")
         self.btn_down = QtGui.QPushButton("Move Down")
-        self.btn_swap = QtGui.QPushButton("Swap Start/End")
+        self.btn_swap = QtGui.QPushButton("Reverse Segment")
         list_buttons.addWidget(self.btn_add)
         list_buttons.addWidget(self.btn_remove)
         list_buttons.addWidget(self.btn_up)
@@ -88,12 +84,12 @@ class WireTaskPanel:
 
         detail_group = QtGui.QGroupBox("Selected Segment")
         detail_layout = QtGui.QFormLayout(detail_group)
-        self.start_label = ClickableLabel("(not set)")
-        self.btn_pick_start = QtGui.QPushButton("Pick Start")
-        self.end_label = ClickableLabel("(not set)")
-        self.btn_pick_end = QtGui.QPushButton("Pick End")
-        detail_layout.addRow("Start:", self._label_with_button(self.start_label, self.btn_pick_start))
-        detail_layout.addRow("End:", self._label_with_button(self.end_label, self.btn_pick_end))
+        self.segment_label = ClickableLabel("(not set)")
+        self.btn_pick_segment = QtGui.QPushButton("Pick Segment")
+        detail_layout.addRow(
+            "Bundle segment:",
+            self._label_with_button(self.segment_label, self.btn_pick_segment),
+        )
         layout.addWidget(detail_group)
 
         geometry_group = QtGui.QGroupBox("Geometry")
@@ -181,11 +177,9 @@ class WireTaskPanel:
         self.btn_remove.clicked.connect(self.remove_segment)
         self.btn_up.clicked.connect(self.move_up)
         self.btn_down.clicked.connect(self.move_down)
-        self.btn_swap.clicked.connect(self.swap_segment_ends)
-        self.btn_pick_start.clicked.connect(lambda: self.pick_point("start"))
-        self.btn_pick_end.clicked.connect(lambda: self.pick_point("end"))
-        self.start_label.clicked.connect(lambda: self.select_point("start"))
-        self.end_label.clicked.connect(lambda: self.select_point("end"))
+        self.btn_swap.clicked.connect(self.reverse_segment)
+        self.btn_pick_segment.clicked.connect(self.pick_segment)
+        self.segment_label.clicked.connect(self.select_segment)
         self.btn_create_path.clicked.connect(self.create_path)
         self.btn_create_cable.clicked.connect(self.create_cable)
         self.wire_size_combo.currentIndexChanged.connect(self._on_wire_size_changed)
@@ -226,17 +220,17 @@ class WireTaskPanel:
         WireCableProxy._add_properties(self.cable)
         self.segments = []
         document = self.cable.Document
-        points = list(self.cable.Points)
-        for index in range(0, len(points) - 1, 2):
-            start = points[index]
-            end = points[index + 1]
-            if start is None or end is None:
+        route = list(self.cable.Points)
+        directions = list(getattr(self.cable, "SegmentDirections", []))
+        for index, segment in enumerate(route):
+            if not is_bundle_segment(segment):
                 continue
             self.segments.append(
                 {
-                    "start": (document.Name, start.Name),
-                    "end": (document.Name, end.Name),
-                    "auto_field": None,
+                    "segment": (document.Name, segment.Name),
+                    "reversed": bool(
+                        directions[index] % 2 if index < len(directions) else 0
+                    ),
                 }
             )
 
@@ -279,7 +273,7 @@ class WireTaskPanel:
         return True
 
     def add_segment(self):
-        self.segments.append({"start": None, "end": None, "auto_field": None})
+        self.segments.append({"segment": None, "reversed": False})
         self._update_list()
         self.segment_list.setCurrentRow(len(self.segments) - 1)
         self._schedule_live_update()
@@ -314,35 +308,17 @@ class WireTaskPanel:
         self.segment_list.setCurrentRow(row + 1)
         self._schedule_live_update()
 
-    def swap_segment_ends(self):
+    def reverse_segment(self):
         row = self._current_row()
         if row is None:
             return
         segment = self.segments[row]
-        start_obj = self._resolve(segment["start"])
-        end_obj = self._resolve(segment["end"])
-        if is_bundle_segment(start_obj) and start_obj is end_obj:
-            endpoint = start_obj.End
-            if endpoint is not None:
-                document = start_obj.Document
-                segment["start"] = (document.Name, endpoint.Name)
-                segment["end"] = (document.Name, start_obj.Name)
-                segment["auto_field"] = "start"
-                self._update_list()
-                self.segment_list.setCurrentRow(row)
-                self._schedule_live_update()
-                return
-        segment["start"], segment["end"] = segment["end"], segment["start"]
-        auto_field = segment.get("auto_field")
-        if auto_field == "start":
-            segment["auto_field"] = "end"
-        elif auto_field == "end":
-            segment["auto_field"] = "start"
+        segment["reversed"] = not bool(segment.get("reversed", False))
         self._update_list()
         self.segment_list.setCurrentRow(row)
         self._schedule_live_update()
 
-    def pick_point(self, field):
+    def pick_segment(self):
         row = self._current_row()
         if row is None:
             QtGui.QMessageBox.information(
@@ -351,15 +327,16 @@ class WireTaskPanel:
             return
 
         self._stop_picking()
-        self._picking = (row, field)
+        self._picking = (row, "segment")
         self.status_label.setStyleSheet("")
         self.status_label.setText(
-            "Select a point reference or bundle segment in the 3D view or "
-            f"tree for segment {row + 1} {field}."
+            f"Select a bundle segment in the 3D view or tree for segment {row + 1}."
         )
         Gui.Selection.clearSelection()
         Gui.Selection.addSelectionGate(
-            PointReferenceGate(allow_bundle_segments=True)
+            PointReferenceGate(
+                allow_bundle_segments=True, allow_point_references=False
+            )
         )
         self._gate_active = True
         self._pick_observer = PickObserver(self._on_picked)
@@ -379,38 +356,18 @@ class WireTaskPanel:
             obj = document.getObject(obj_name)
         else:
             obj = obj_name
-        if obj is None:
-            return
-        if obj.TypeId not in POINT_REFERENCE_TYPES and not is_bundle_segment(obj):
+        if obj is None or not is_bundle_segment(obj):
             return
 
-        row, field = self._picking
+        row, _field = self._picking
         self._stop_picking()
         if row >= len(self.segments):
             return
 
         entry = self.segments[row]
-        if is_bundle_segment(obj):
-            endpoint = obj.End
-            entry["start"] = None
-            entry["end"] = None
-            entry["auto_field"] = None
-            if field == "start":
-                entry["start"] = (document.Name, obj.Name)
-                if endpoint is not None:
-                    entry["end"] = (document.Name, endpoint.Name)
-                    entry["auto_field"] = "end"
-            else:
-                entry["end"] = (document.Name, obj.Name)
-                if endpoint is not None:
-                    entry["start"] = (document.Name, endpoint.Name)
-                    entry["auto_field"] = "start"
-            self.status_label.setStyleSheet("")
-            self.status_label.setText("Bundle segment endpoints set.")
-        else:
-            entry[field] = (document.Name, obj.Name)
-            if entry.get("auto_field") == field:
-                entry["auto_field"] = None
+        entry["segment"] = (document.Name, obj.Name)
+        self.status_label.setStyleSheet("")
+        self.status_label.setText("Bundle segment selected.")
         self._update_list()
         self.segment_list.setCurrentRow(row)
         self._schedule_live_update()
@@ -455,14 +412,8 @@ class WireTaskPanel:
             self._selection_observer = None
 
     def _row_scene_objects(self, row):
-        objects = []
-        segment = self.segments[row]
-        for field in ("start", "end"):
-            obj = self._resolve(segment[field])
-            if obj is not None and obj not in objects:
-                objects.append(obj)
-        bundles = [obj for obj in objects if is_bundle_segment(obj)]
-        return bundles if bundles else objects
+        obj = self._resolve(self.segments[row].get("segment"))
+        return [obj] if obj is not None else []
 
     def _on_list_row_changed(self, _row):
         if self._syncing_selection or self._picking is not None:
@@ -498,13 +449,11 @@ class WireTaskPanel:
         if selected is None or not is_bundle_segment(selected):
             return
 
-        matches = []
-        for row, segment in enumerate(self.segments):
-            if (
-                self._resolve(segment["start"]) is selected
-                or self._resolve(segment["end"]) is selected
-            ):
-                matches.append(row)
+        matches = [
+            row
+            for row, entry in enumerate(self.segments)
+            if self._resolve(entry.get("segment")) is selected
+        ]
         if not matches:
             return
 
@@ -534,18 +483,25 @@ class WireTaskPanel:
             return None
         return document.getObject(ref[1])
 
-    def _point_text(self, ref, reversed_bundle=False):
+    def _segment_text(self, ref, reversed_segment=False):
         obj = self._resolve(ref)
         if obj is None:
             return "(not set)" if ref is None else "(missing)"
-        if is_bundle_segment(obj):
-            start = obj.Start.Label if obj.Start else "?"
-            end = obj.End.Label if obj.End else "?"
-            if reversed_bundle:
-                return f"{obj.Label} ({end} -> {start}) [reversed]"
-            return f"{obj.Label} ({start} -> {end})"
-        point = obj.getGlobalPlacement().Base
-        return f"{obj.Label} ({point.x:.2f}, {point.y:.2f}, {point.z:.2f})"
+        if not is_bundle_segment(obj):
+            return f"{obj.Label} (not a bundle segment)"
+        start = obj.Start.Label if obj.Start else "?"
+        end = obj.End.Label if obj.End else "?"
+        if reversed_segment:
+            return f"{obj.Label} ({end} -> {start}) [reversed]"
+        return f"{obj.Label} ({start} -> {end})"
+
+    @staticmethod
+    def _segment_endpoints(obj, reversed_segment=False):
+        start = getattr(obj, "Start", None)
+        end = getattr(obj, "End", None)
+        if reversed_segment:
+            return end, start
+        return start, end
 
     def _on_wire_size_changed(self, *args):
         data = self.wire_size_combo.currentData()
@@ -653,11 +609,11 @@ class WireTaskPanel:
         if self.cable is not None:
             if self._cable_is_usable(self.cable.Document):
                 self._live_timer.start()
-        elif len(self.segments) > 1:
+        elif len(self.segments) >= 1:
             self._live_timer.start()
 
     def _live_update(self):
-        if self.cable is None and len(self.segments) <= 1:
+        if self.cable is None and not self.segments:
             self.status_label.setStyleSheet("")
             self.status_label.setText("")
             return
@@ -671,34 +627,28 @@ class WireTaskPanel:
 
     def _collect_valid_prefix(self, document):
         if not self.segments:
-            return [], "Add at least one segment first."
+            return [], "Add at least one bundle segment first."
 
         links = []
-        for index, segment in enumerate(self.segments):
-            start_obj = self._resolve(segment["start"])
-            end_obj = self._resolve(segment["end"])
-            if start_obj is None:
-                return links, f"Segment {index + 1} needs a start reference."
-            if end_obj is None:
-                return links, f"Segment {index + 1} needs an end reference."
-            if (
-                start_obj.Document is not document
-                or end_obj.Document is not document
-            ):
+        for index, entry in enumerate(self.segments):
+            segment = self._resolve(entry.get("segment"))
+            if segment is None:
+                return links, f"Segment {index + 1} needs a bundle segment."
+            if not is_bundle_segment(segment):
                 return (
                     links,
-                    "All references must belong to the same document as the cable.",
+                    f"Segment {index + 1} is not a bundle segment.",
                 )
-            if not is_bundle_segment(start_obj) and not is_bundle_segment(end_obj):
-                start = start_obj.getGlobalPlacement().Base
-                end = end_obj.getGlobalPlacement().Base
-                if (end - start).Length < 1e-9:
-                    return (
-                        links,
-                        f"Segment {index + 1} has identical start and end points.",
-                    )
-            links.extend([start_obj, end_obj])
+            if segment.Document is not document:
+                return (
+                    links,
+                    "All bundle segments must belong to the same document as the cable.",
+                )
+            links.append(segment)
         return links, None
+
+    def _segment_directions(self):
+        return [1 if entry.get("reversed", False) else 0 for entry in self.segments]
 
     def _apply_cable_parameters(self, cable):
         diameter = self.diameter_spin.value()
@@ -708,6 +658,7 @@ class WireTaskPanel:
         cable.Diameter = diameter
         cable.MinBendRadius = min_bend_radius
         cable.WireSizeMM2 = wire_size_mm2
+        cable.SegmentDirections = self._segment_directions()
         cable.CableColor = self._selected_primary_color()
         cable.CableColorTracer = self._selected_tracer_color()
         if wire_size_mm2 > 0.0:
@@ -721,22 +672,24 @@ class WireTaskPanel:
             cable.CoreArea = math.pi * (core_diameter / 2.0) ** 2
 
     def _update_incomplete_preview(self, document, links, message):
-        if self.cable is None and (len(self.segments) <= 1 or not links):
+        if self.cable is None and (not self.segments or not links):
             self.status_label.setStyleSheet("color: #d08000;")
             self.status_label.setText(f"Segment definition incomplete: {message}")
             return
 
         try:
+            directions = self._segment_directions()
             if self._cable_is_usable(document):
                 ensure_support_objects(self.cable)
                 self.cable.Points = links
+                self.cable.SegmentDirections = directions
                 update_cable_dependencies(self.cable)
                 self._apply_cable_parameters(self.cable)
                 self.cable.BuildCable = self._build_cable
                 self.cable.Preview = True
             else:
                 name_text = self.name_edit.text().strip()
-                preview_name = name_text or self._auto_wire_name(links)
+                preview_name = name_text or self._auto_wire_name()
                 safe_name = self._safe_object_name(preview_name)
                 container = document.addObject(
                     "App::DocumentObjectGroup", safe_name + "_Group"
@@ -744,6 +697,7 @@ class WireTaskPanel:
                 self.cable = create_wire_cable(
                     document,
                     links,
+                    directions=directions,
                     diameter=self.diameter_spin.value(),
                     min_bend_radius=self.min_bend_spin.value(),
                     container=container,
@@ -774,41 +728,49 @@ class WireTaskPanel:
         current = self.segment_list.currentRow()
         self.segment_list.blockSignals(True)
         self.segment_list.clear()
-        for index, segment in enumerate(self.segments):
-            start = self._point_text(segment["start"])
-            end = self._point_text(segment["end"], reversed_bundle=True)
-            self.segment_list.addItem(f"{index + 1}: {start} -> {end}")
+        for index, entry in enumerate(self.segments):
+            text = self._segment_text(
+                entry.get("segment"), bool(entry.get("reversed", False))
+            )
+            self.segment_list.addItem(f"{index + 1}: {text}")
         if 0 <= current < len(self.segments):
             self.segment_list.setCurrentRow(current)
         self.segment_list.blockSignals(False)
         self._update_detail()
         self._update_name_placeholder()
 
-    def _name_component(self, obj):
-        if is_bundle_segment(obj):
-            point = obj.Start
-            text = point.Label if point else (obj.Label or obj.Name or "bundle")
-        else:
-            text = obj.Label or obj.Name or "point"
+    @staticmethod
+    def _name_component(obj):
+        text = getattr(obj, "Label", None) or getattr(obj, "Name", None) or "point"
         component = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
         return component or "point"
 
     def _auto_name_from_objects(self, start, end):
         return f"wire_{self._name_component(start)}_{self._name_component(end)}"
 
-    def _suggested_wire_name(self):
+    def _route_endpoints(self):
         if not self.segments:
-            return ""
-        start = self._resolve(self.segments[0]["start"])
-        end = self._resolve(self.segments[-1]["end"])
+            return None, None
+        first = self._resolve(self.segments[0].get("segment"))
+        last = self._resolve(self.segments[-1].get("segment"))
+        if first is None or last is None:
+            return None, None
+        start, _ = self._segment_endpoints(
+            first, bool(self.segments[0].get("reversed", False))
+        )
+        _, end = self._segment_endpoints(
+            last, bool(self.segments[-1].get("reversed", False))
+        )
+        return start, end
+
+    def _suggested_wire_name(self):
+        start, end = self._route_endpoints()
         if start is None or end is None:
             return ""
         return self._auto_name_from_objects(start, end)
 
-    def _auto_wire_name(self, links):
-        if len(links) < 2:
-            return ""
-        return self._auto_name_from_objects(links[0], links[-1])
+    def _auto_wire_name(self):
+        return self._suggested_wire_name()
 
     def _update_name_placeholder(self):
         suggested = self._suggested_wire_name()
@@ -829,51 +791,50 @@ class WireTaskPanel:
     def _update_detail(self, *args):
         row = self._current_row()
         has_segment = row is not None
-        self.btn_pick_start.setEnabled(has_segment)
-        self.btn_pick_end.setEnabled(has_segment)
+        self.btn_pick_segment.setEnabled(has_segment)
         self.btn_remove.setEnabled(has_segment)
         self.btn_up.setEnabled(has_segment and row > 0)
         self.btn_down.setEnabled(has_segment and row < len(self.segments) - 1)
         self.btn_swap.setEnabled(has_segment)
 
         if not has_segment:
-            self._update_point_label(self.start_label, None)
-            self._update_point_label(self.end_label, None, reversed_bundle=True)
+            self._update_segment_label(None, False)
             return
 
-        segment = self.segments[row]
-        self._update_point_label(self.start_label, segment["start"])
-        self._update_point_label(
-            self.end_label, segment["end"], reversed_bundle=True
+        entry = self.segments[row]
+        self._update_segment_label(
+            entry.get("segment"), bool(entry.get("reversed", False))
         )
 
-    def _update_point_label(self, label, ref, reversed_bundle=False):
-        label.setText(self._point_text(ref, reversed_bundle))
+    def _update_segment_label(self, ref, reversed_segment=False):
+        self.segment_label.setText(
+            self._segment_text(ref, reversed_segment)
+        )
         if self._resolve(ref) is None:
-            label.setCursor(QtCore.Qt.ArrowCursor)
-            label.setStyleSheet("")
-            label.setToolTip("")
+            self.segment_label.setCursor(QtCore.Qt.ArrowCursor)
+            self.segment_label.setStyleSheet("")
+            self.segment_label.setToolTip("")
         else:
-            label.setCursor(QtCore.Qt.PointingHandCursor)
-            label.setStyleSheet("color: #1a5fb4; text-decoration: underline;")
-            label.setToolTip(
-                "Click to select this point reference or bundle segment in the scene"
+            self.segment_label.setCursor(QtCore.Qt.PointingHandCursor)
+            self.segment_label.setStyleSheet(
+                "color: #1a5fb4; text-decoration: underline;"
+            )
+            self.segment_label.setToolTip(
+                "Click to select this bundle segment in the scene"
             )
 
-    def select_point(self, field):
+    def select_segment(self):
         row = self._current_row()
         if row is None:
             return
-
         self._stop_picking()
-        obj = self._resolve(self.segments[row][field])
+        obj = self._resolve(self.segments[row].get("segment"))
         if obj is None:
             self.status_label.setStyleSheet("")
             self.status_label.setText(
-                f"No point reference set for segment {row + 1} {field}."
+                f"No bundle segment set for segment {row + 1}."
             )
             return
-
         try:
             obj.ViewObject.Visibility = True
         except Exception:
@@ -882,40 +843,30 @@ class WireTaskPanel:
         Gui.Selection.addSelection(obj)
         self.status_label.setStyleSheet("")
         self.status_label.setText(
-            f"Selected {obj.Label} for segment {row + 1} {field}."
+            f"Selected {obj.Label} for segment {row + 1}."
         )
-
-    def _reference_object(self, ref, role, index):
-        obj = self._resolve(ref)
-        if obj is None:
-            raise ValueError(
-                f"Segment {index + 1} needs a {role} reference."
-            )
-        return obj
 
     def _collect_segments(self, document):
         if not self.segments:
-            raise ValueError("Add at least one segment first.")
+            raise ValueError("Add at least one bundle segment first.")
 
-        segments = []
         links = []
-        for index, segment in enumerate(self.segments):
-            start_obj = self._reference_object(segment["start"], "start", index)
-            end_obj = self._reference_object(segment["end"], "end", index)
-            if start_obj.Document is not document or end_obj.Document is not document:
+        for index, entry in enumerate(self.segments):
+            segment = self._resolve(entry.get("segment"))
+            if segment is None:
                 raise ValueError(
-                    "All references must belong to the same document as the cable."
+                    f"Segment {index + 1} needs a bundle segment."
                 )
-            if not is_bundle_segment(start_obj) and not is_bundle_segment(end_obj):
-                start = start_obj.getGlobalPlacement().Base
-                end = end_obj.getGlobalPlacement().Base
-                if (end - start).Length < 1e-9:
-                    raise ValueError(
-                        f"Segment {index + 1} has identical start and end points."
-                    )
-                segments.append(Segment(start, end))
-            links.extend([start_obj, end_obj])
-        return segments, links
+            if not is_bundle_segment(segment):
+                raise ValueError(
+                    f"Segment {index + 1} is not a bundle segment."
+                )
+            if segment.Document is not document:
+                raise ValueError(
+                    "All bundle segments must belong to the same document as the cable."
+                )
+            links.append(segment)
+        return links, self._segment_directions()
 
     def _target_document(self):
         if self.cable is not None:
@@ -953,7 +904,7 @@ class WireTaskPanel:
         document = self._target_document()
 
         try:
-            _, links = self._collect_segments(document)
+            links, directions = self._collect_segments(document)
         except ValueError as error:
             if live:
                 self.status_label.setStyleSheet("color: #b00000;")
@@ -967,13 +918,14 @@ class WireTaskPanel:
         harness = find_harness_for_segments(links)
         wire_name = self.name_edit.text().strip()
         if not wire_name:
-            wire_name = self._auto_wire_name(links)
+            wire_name = self._auto_wire_name()
         safe_name = self._safe_object_name(wire_name)
 
         try:
             if self._cable_is_usable(document):
                 ensure_support_objects(self.cable)
                 self.cable.Points = links
+                self.cable.SegmentDirections = directions
                 update_cable_dependencies(self.cable)
                 self._apply_cable_parameters(self.cable)
                 self.cable.BuildCable = make_cable
@@ -987,6 +939,7 @@ class WireTaskPanel:
                 self.cable = create_wire_cable(
                     document,
                     links,
+                    directions=directions,
                     diameter=diameter,
                     min_bend_radius=min_bend_radius,
                     container=container,

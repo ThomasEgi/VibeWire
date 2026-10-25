@@ -26,6 +26,8 @@ class WireBundleTaskPanel:
         self._pick_observer = None
         self._picking = None
         self._gate_active = False
+        self._syncing_selection = False
+        self._selection_observer = None
         self.bundle = bundle
 
         self.form = QtGui.QWidget()
@@ -71,16 +73,21 @@ class WireBundleTaskPanel:
         self.orientation_spin.setValue(0.0)
         self.orientation_spin.setSuffix(" deg")
         detail_layout.addRow("Rotation:", self.orientation_spin)
-        layout.addWidget(detail_group)
-
-        radius_form = QtGui.QFormLayout()
+        self.max_cables_spin = QtGui.QSpinBox()
+        self.max_cables_spin.setRange(0, 9999)
+        self.max_cables_spin.setValue(0)
+        self.max_cables_spin.setSpecialValueText("Unlimited")
+        detail_layout.addRow("Max cables:", self.max_cables_spin)
         self.radius_spin = QtGui.QDoubleSpinBox()
         self.radius_spin.setRange(0.1, 1000.0)
         self.radius_spin.setDecimals(2)
         self.radius_spin.setSingleStep(1.0)
         self.radius_spin.setValue(10.0)
         self.radius_spin.setSuffix(" mm")
-        radius_form.addRow("Display radius:", self.radius_spin)
+        detail_layout.addRow("Display radius:", self.radius_spin)
+        layout.addWidget(detail_group)
+
+        radius_form = QtGui.QFormLayout()
         self.gap_spin = QtGui.QDoubleSpinBox()
         self.gap_spin.setRange(0.0, 1000.0)
         self.gap_spin.setDecimals(2)
@@ -108,6 +115,8 @@ class WireBundleTaskPanel:
         self.end_label.clicked.connect(lambda: self.select_point("end"))
         self.btn_apply.clicked.connect(self.apply)
         self.orientation_spin.valueChanged.connect(self._on_orientation_changed)
+        self.max_cables_spin.valueChanged.connect(self._on_max_cables_changed)
+        self.radius_spin.valueChanged.connect(self._on_radius_changed)
         self.segment_list.currentRowChanged.connect(self._update_detail)
         self.form.destroyed.connect(self._on_form_destroyed)
 
@@ -117,6 +126,11 @@ class WireBundleTaskPanel:
         else:
             self._update_list()
             self._update_detail()
+
+        self._select_initial_segment()
+        self.segment_list.currentRowChanged.connect(self._on_list_row_changed)
+        self._selection_observer = PickObserver(self._on_scene_selection)
+        Gui.Selection.addObserver(self._selection_observer)
 
     def _update_button_labels(self):
         action = "Update" if self.bundle is not None else "Create"
@@ -137,10 +151,10 @@ class WireBundleTaskPanel:
                     "end": (document.Name, end.Name) if end else None,
                     "object": segment,
                     "orientation": orientation,
+                    "max_cables": int(getattr(segment, "MaxCables", 0) or 0),
+                    "radius": segment.Radius.Value,
                 }
             )
-        if self.segments:
-            self.radius_spin.setValue(self.segments[0]["object"].Radius.Value)
         if "Gap" in self.bundle.PropertiesList:
             self.gap_spin.setValue(self.bundle.Gap.Value)
         if "Pattern" in self.bundle.PropertiesList:
@@ -170,7 +184,16 @@ class WireBundleTaskPanel:
         return True
 
     def add_segment(self):
-        self.segments.append({"start": None, "end": None, "object": None, "orientation": 0.0})
+        self.segments.append(
+            {
+                "start": None,
+                "end": None,
+                "object": None,
+                "orientation": 0.0,
+                "max_cables": 0,
+                "radius": self.radius_spin.value(),
+            }
+        )
         self._update_list()
         self.segment_list.setCurrentRow(len(self.segments) - 1)
 
@@ -254,6 +277,7 @@ class WireBundleTaskPanel:
 
     def _on_form_destroyed(self, *args):
         self._stop_picking()
+        self._remove_selection_observer()
         try:
             from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
 
@@ -261,6 +285,80 @@ class WireBundleTaskPanel:
             schedule_clear_tool_selection(self.bundle)
         except Exception:
             pass
+
+    def _select_initial_segment(self):
+        if self.bundle is None:
+            return
+        selected = Gui.Selection.getSelection()
+        for row, entry in enumerate(self.segments):
+            if entry.get("object") in selected:
+                self.segment_list.setCurrentRow(row)
+                item = self.segment_list.item(row)
+                if item is not None:
+                    self.segment_list.scrollToItem(item)
+                return
+
+    def _on_list_row_changed(self, _row):
+        if self._syncing_selection or self._picking is not None:
+            return
+        row = self._current_row()
+        if row is None:
+            return
+        segment = self.segments[row].get("object")
+        if segment is None or not segment.isValid():
+            return
+        self._syncing_selection = True
+        try:
+            Gui.Selection.clearSelection()
+            Gui.Selection.addSelection(segment)
+        finally:
+            self._syncing_selection = False
+
+    def _on_scene_selection(self, doc_name, obj_name, subelement):
+        if self._syncing_selection or self._picking is not None:
+            return
+        if isinstance(doc_name, str):
+            document = App.getDocument(doc_name)
+        else:
+            document = doc_name
+        if document is None:
+            return
+        selected = (
+            document.getObject(obj_name)
+            if isinstance(obj_name, str)
+            else obj_name
+        )
+        if selected is None:
+            return
+        from .WireBundle import is_bundle_segment
+
+        if not is_bundle_segment(selected):
+            return
+        matches = [
+            row
+            for row, entry in enumerate(self.segments)
+            if entry.get("object") is selected
+        ]
+        if not matches:
+            return
+        current = self.segment_list.currentRow()
+        row = current if current in matches else matches[0]
+        self._syncing_selection = True
+        try:
+            self.segment_list.setCurrentRow(row)
+            item = self.segment_list.item(row)
+            if item is not None:
+                self.segment_list.scrollToItem(item)
+        finally:
+            self._syncing_selection = False
+
+    def _remove_selection_observer(self):
+        if self._selection_observer is not None:
+            try:
+                Gui.Selection.removeObserver(self._selection_observer)
+            except Exception:
+                pass
+            self._selection_observer = None
 
     def _current_row(self):
         row = self.segment_list.currentRow()
@@ -304,6 +402,8 @@ class WireBundleTaskPanel:
         self.btn_pick_end.setEnabled(has_segment)
         self.btn_remove.setEnabled(has_segment)
         self.orientation_spin.setEnabled(has_segment)
+        self.max_cables_spin.setEnabled(has_segment)
+        self.radius_spin.setEnabled(has_segment)
 
         if not has_segment:
             self._update_point_label(self.start_label, None)
@@ -311,6 +411,9 @@ class WireBundleTaskPanel:
             self.orientation_spin.blockSignals(True)
             self.orientation_spin.setValue(0.0)
             self.orientation_spin.blockSignals(False)
+            self.max_cables_spin.blockSignals(True)
+            self.max_cables_spin.setValue(0)
+            self.max_cables_spin.blockSignals(False)
             return
 
         segment = self.segments[row]
@@ -319,11 +422,34 @@ class WireBundleTaskPanel:
         self.orientation_spin.blockSignals(True)
         self.orientation_spin.setValue(segment.get("orientation", 0.0))
         self.orientation_spin.blockSignals(False)
+        self.max_cables_spin.blockSignals(True)
+        self.max_cables_spin.setValue(int(segment.get("max_cables", 0) or 0))
+        self.max_cables_spin.blockSignals(False)
+        self.radius_spin.blockSignals(True)
+        self.radius_spin.setValue(float(segment.get("radius", 10.0) or 10.0))
+        self.radius_spin.blockSignals(False)
 
     def _on_orientation_changed(self, value):
         row = self._current_row()
         if row is not None:
             self.segments[row]["orientation"] = float(value)
+
+    def _on_max_cables_changed(self, value):
+        row = self._current_row()
+        if row is not None:
+            self.segments[row]["max_cables"] = int(value)
+
+    def _on_radius_changed(self, value):
+        row = self._current_row()
+        if row is None:
+            return
+        entry = self.segments[row]
+        entry["radius"] = float(value)
+        segment = entry.get("object")
+        if segment is not None and segment.isValid():
+            segment.Radius = float(value)
+            if segment.Document is not None:
+                segment.Document.recompute()
 
     def _update_point_label(self, label, ref):
         label.setText(self._point_text(ref))
@@ -414,7 +540,6 @@ class WireBundleTaskPanel:
             QtGui.QMessageBox.warning(self.form, "WirePlugin", str(error))
             return
 
-        radius = self.radius_spin.value()
         try:
             bundle_usable = self._is_valid(self.bundle, document)
             if not bundle_usable:
@@ -436,14 +561,19 @@ class WireBundleTaskPanel:
                 if self._is_valid(segment, document):
                     segment.Start = start
                     segment.End = end
-                    segment.Radius = radius
+                    segment.Radius = float(entry.get("radius", 10.0) or 10.0)
                     segment.Orientation = entry.get("orientation", 0.0)
+                    segment.MaxCables = int(entry.get("max_cables", 0) or 0)
                     update_segment_dependencies(segment)
                 else:
                     segment = create_bundle_segment(
-                        self.bundle, start, end, radius=radius
+                        self.bundle,
+                        start,
+                        end,
+                        radius=float(entry.get("radius", 10.0) or 10.0),
                     )
                     segment.Orientation = entry.get("orientation", 0.0)
+                    segment.MaxCables = int(entry.get("max_cables", 0) or 0)
                     entry["object"] = segment
                 panel_objects.append(segment)
 
@@ -451,6 +581,9 @@ class WireBundleTaskPanel:
                 if segment not in panel_objects:
                     remove_bundle_segment(self.bundle, segment)
             self.bundle.Segments = panel_objects
+            from .WireBundle import ensure_segment_group
+
+            ensure_segment_group(self.bundle)
         except Exception as error:
             QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
             return

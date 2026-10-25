@@ -67,3 +67,10 @@
 - 2026-10-25: Added visible hover previews for cables, offset-tip path segments and opaque green bundle cap faces; bundle segments now default to dark grey/65% transparency.
 - 2026-10-25: Bundle cap hover preview now includes a thick green circular edge so it remains visible when the cap face is occluded.
 - 2026-10-25: Bundle endpoint move commands now use Std_TransformManip when available and fall back to Std_Placement.
+- 2026-10-25: Switched cable routes to ordered bundle segments with per-segment reverse flags; dropped point route pieces, added segment MaxCables validation, and simplified the wire tool to one segment picker per row.
+- 2026-10-25: New bundle segments are now explicitly created visible; the newly added hidden segment in the current document was made visible.
+- 2026-10-25: Fixed new bundle segments with uninitialized Part view providers (no display modes); initialize Proxy, visibility and tree icon. Added a showable empty display mode to the harness view provider.
+- 2026-10-25: Harness editor segment list now syncs with 3D selection in both directions.
+- 2026-10-25: Grouped all harness segments in a standard Segments group so the group eye toggles their visibility together.
+- 2026-10-25: Opening the harness editor from a selected bundle segment now selects that segment's row and preserves the 3D selection.
+- 2026-10-25: Moved display radius into the selected segment controls with live per-segment updates; Add Segment copies the active/default radius.

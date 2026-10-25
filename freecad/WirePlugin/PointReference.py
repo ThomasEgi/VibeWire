@@ -17,8 +17,9 @@ POINT_REFERENCE_TYPES = (
 class PointReferenceGate:
     """Selection gate for point references, optionally bundle segments."""
 
-    def __init__(self, allow_bundle_segments=False):
+    def __init__(self, allow_bundle_segments=False, allow_point_references=True):
         self.allow_bundle_segments = allow_bundle_segments
+        self.allow_point_references = allow_point_references
 
     def allow(self, document, obj, subelement):
         if isinstance(document, str):
@@ -29,7 +30,7 @@ class PointReferenceGate:
             obj = document.getObject(obj)
         if obj is None:
             return False
-        if obj.TypeId in POINT_REFERENCE_TYPES:
+        if self.allow_point_references and obj.TypeId in POINT_REFERENCE_TYPES:
             return True
         return self.allow_bundle_segments and is_bundle_segment(obj)
 

@@ -34,6 +34,13 @@ class WireHarnessProxy:
                 "Harness",
                 "Independent straight bundle segments",
             )
+        if "SegmentGroup" not in properties:
+            obj.addProperty(
+                "App::PropertyLink",
+                "SegmentGroup",
+                "Harness",
+                "Group containing the harness bundle segments",
+            )
         if "CableOrder" not in properties:
             obj.addProperty(
                 "App::PropertyStringList",
@@ -146,6 +153,7 @@ class WireHarnessProxy:
 
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
+        ensure_segment_group(obj)
         if "Cables" in obj.PropertiesList:
             try:
                 obj.removeProperty("Cables")
@@ -192,7 +200,10 @@ def is_wire_cable(obj):
 
 
 def cable_uses_segment(cable, segment):
-    return any(node is segment for node in cable.Points)
+    points = list(getattr(cable, "Points", []))
+    if not points or not all(is_bundle_segment(node) for node in points):
+        return False
+    return any(node is segment for node in points)
 
 
 def find_harness_for_segments(nodes):
@@ -291,18 +302,80 @@ class ViewProviderWireBundle:
     def __init__(self, vobj):
         vobj.Proxy = self
         self.Object = vobj.Object
+        self._setup_display_mode(vobj)
 
     def getIcon(self):
         return ICON
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        self._setup_display_mode(vobj)
+        self._sync_visibility_mode(vobj)
+        try:
+            vobj.signalChangeIcon()
+        except Exception:
+            pass
+
+    def getDisplayModes(self, vobj):
+        return ["Default"]
+
+    def getDefaultDisplayMode(self):
+        return "Default"
+
+    def onChanged(self, vobj, prop):
+        if prop == "Visibility":
+            self._sync_visibility_mode(vobj)
+            try:
+                vobj.signalChangeIcon()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _mode_switch(vobj):
+        try:
+            from pivy import coin
+
+            root = vobj.RootNode
+            for i in range(root.getNumChildren()):
+                node = root.getChild(i)
+                if isinstance(node, coin.SoSwitch):
+                    return node
+        except Exception:
+            pass
+        return None
+
+    def _setup_display_mode(self, vobj):
+        switch = self._mode_switch(vobj)
+        if switch is not None:
+            try:
+                if switch.getNumChildren() == 0:
+                    from pivy import coin
+
+                    self._coin_node = coin.SoSeparator()
+                    vobj.addDisplayMode(self._coin_node, "Default")
+            except Exception:
+                self._coin_node = None
+        try:
+            vobj.DefaultMode = 0
+        except Exception:
+            pass
+
+    @staticmethod
+    def _sync_visibility_mode(vobj):
+        switch = ViewProviderWireBundle._mode_switch(vobj)
+        if switch is None:
+            return
+        try:
+            switch.whichChild = 0 if vobj.Visibility else -1
+        except Exception:
+            pass
 
     def claimChildren(self):
         obj = getattr(self, "Object", None)
         if obj is None:
             return []
-        children = list(obj.Segments)
+        group = getattr(obj, "SegmentGroup", None)
+        children = [group] if group is not None and group.isValid() else list(obj.Segments)
         try:
             from .WireCable import find_container
 
@@ -321,11 +394,17 @@ class ViewProviderWireBundle:
             return False
         from .WireBundleTaskPanel import WireBundleTaskPanel
 
-        Gui.Control.showDialog(WireBundleTaskPanel(bundle=vobj.Object))
+        harness = vobj.Object
+        selected_segment = None
+        for selected in Gui.Selection.getSelection():
+            if is_bundle_segment(selected) and selected in harness.Segments:
+                selected_segment = selected
+                break
+        Gui.Control.showDialog(WireBundleTaskPanel(bundle=harness))
         try:
             from .WireSelection import schedule_select_tool_object
 
-            schedule_select_tool_object(vobj.Object)
+            schedule_select_tool_object(selected_segment or harness)
         except Exception:
             pass
         return True
@@ -353,6 +432,8 @@ class ViewProviderWireBundle:
         segment_names = [
             segment.Name for segment in obj.Segments if segment.isValid()
         ]
+        group = getattr(obj, "SegmentGroup", None)
+        group_name = group.Name if group is not None and group.isValid() else None
 
         def cleanup():
             doc = App.getDocument(document_name)
@@ -364,6 +445,11 @@ class ViewProviderWireBundle:
                         doc.removeObject(name)
                     except Exception:
                         pass
+            if group_name and doc.getObject(group_name) is not None:
+                try:
+                    doc.removeObject(group_name)
+                except Exception:
+                    pass
 
         try:
             from PySide import QtCore
@@ -411,6 +497,14 @@ class WireBundleSegmentProxy:
                 "Rotation of the cable arrangement about the segment axis",
             )
             obj.Orientation = 0.0
+        if "MaxCables" not in obj.PropertiesList:
+            obj.addProperty(
+                "App::PropertyInteger",
+                "MaxCables",
+                "Segment",
+                "Maximum cables allowed in this segment (0 = unlimited)",
+            )
+            obj.MaxCables = 0
         if "Dependencies" not in obj.PropertiesList:
             obj.addProperty(
                 "App::PropertyLinkListGlobal",
@@ -439,6 +533,28 @@ class WireBundleSegmentProxy:
         obj.Shape = Part.makeCylinder(
             obj.Radius.Value, length, start, direction / length
         )
+        if App.GuiUp:
+            try:
+                view = obj.ViewObject
+                if getattr(view, "Proxy", None) is None:
+                    view.Proxy = 1
+                    view.Visibility = True
+                view.signalChangeIcon()
+            except Exception:
+                pass
+
+    def onChanged(self, obj, prop):
+        if prop != "MaxCables":
+            return
+        for parent in obj.InList:
+            if getattr(getattr(parent, "Proxy", None), "Type", None) in (
+                "WireCable",
+                "WireHarness",
+            ):
+                try:
+                    parent.touch()
+                except Exception:
+                    pass
 
     def dumps(self):
         return self.Type
@@ -501,10 +617,32 @@ def update_segment_dependencies(segment):
         segment.Dependencies = dependencies
 
 
+def ensure_segment_group(harness):
+    if harness is None or harness.Document is None:
+        return None
+    document = harness.Document
+    group = getattr(harness, "SegmentGroup", None)
+    if group is None or not group.isValid() or group.Document is not document:
+        name = "Segments"
+        index = 1
+        while document.getObject(name) is not None:
+            name = f"Segments{index:03d}"
+            index += 1
+        group = document.addObject("App::DocumentObjectGroup", name)
+        group.Label = "Segments"
+        harness.SegmentGroup = group
+    desired = list(harness.Segments)
+    current = list(group.Group)
+    if current != desired:
+        group.Group = desired
+    return group
+
+
 def create_wire_harness(document, label="Harness"):
     harness = document.addObject("App::FeaturePython", "WireHarness")
     harness.Label = label
     WireHarnessProxy(harness)
+    ensure_segment_group(harness)
     if App.GuiUp:
         ViewProviderWireHarness(harness.ViewObject)
     return harness
@@ -527,17 +665,21 @@ def create_bundle_segment(bundle, start, end, radius=10.0):
         try:
             segment.ViewObject.ShapeColor = (0.33, 0.33, 0.36)
             segment.ViewObject.Transparency = 65
+            segment.ViewObject.Visibility = True
+            segment.ViewObject.signalChangeIcon()
         except Exception:
             pass
     segments = list(bundle.Segments)
     segments.append(segment)
     bundle.Segments = segments
+    ensure_segment_group(bundle)
     return segment
 
 
 def remove_bundle_segment(bundle, segment):
     segments = [item for item in bundle.Segments if item is not segment]
     bundle.Segments = segments
+    ensure_segment_group(bundle)
     document = bundle.Document
     if document.getObject(segment.Name) is segment:
         document.removeObject(segment.Name)

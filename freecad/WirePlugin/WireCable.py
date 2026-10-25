@@ -41,7 +41,7 @@ SUPPORT_OBJECT_PROPERTIES = (
 
 
 class WireCableProxy:
-    """Document object that rebuilds path and cable geometry from linked points."""
+    """Document object that rebuilds path and cable geometry from bundle segments."""
 
     def __init__(self, obj):
         obj.Proxy = self
@@ -56,8 +56,15 @@ class WireCableProxy:
             obj,
             "Points",
             "Wire",
-            "Ordered start/end node references (start 1, end 1, start 2, ...)",
+            "Ordered bundle segments defining the cable route",
         )
+        if "SegmentDirections" not in properties:
+            obj.addProperty(
+                "App::PropertyIntegerList",
+                "SegmentDirections",
+                "Wire",
+                "Per-segment route direction (0 normal, 1 reversed)",
+            )
         if "Harness" not in properties:
             obj.addProperty(
                 "App::PropertyLinkGlobal",
@@ -249,62 +256,38 @@ class WireCableProxy:
             self._executing = False
 
     def _rebuild(self, obj):
-        points = list(obj.Points)
-        if not points or len(points) % 2:
-            self._set_error(obj, "Define at least one complete segment.")
+        route = list(obj.Points)
+        if not route:
+            self._set_error(obj, "Define at least one bundle segment.")
             return
 
+        capacity_error = self._capacity_error(obj, route)
+        if capacity_error is not None:
+            self._set_error(obj, capacity_error)
+            return
+
+        directions = list(obj.SegmentDirections)
+        if len(directions) < len(route):
+            directions.extend([0] * (len(route) - len(directions)))
+
         segments = []
-        for index in range(0, len(points), 2):
-            start_obj = points[index]
-            end_obj = points[index + 1]
-            number = index // 2 + 1
-            if start_obj is None or end_obj is None:
+        for index, segment_obj in enumerate(route):
+            number = index + 1
+            if not is_bundle_segment(segment_obj):
                 self._set_error(
-                    obj, f"Segment {number} is missing a start or end point."
+                    obj,
+                    f"Route item {number} is not a bundle segment. "
+                    "Rebuild legacy point routes.",
                 )
                 return
-
-            start_is_bundle = is_bundle_segment(start_obj)
-            end_is_bundle = is_bundle_segment(end_obj)
-            if start_is_bundle and end_is_bundle and start_obj is end_obj:
-                try:
-                    bundle_start, bundle_end = self._bundle_points(obj, start_obj)
-                    self._append_segment(segments, bundle_start, bundle_end)
-                except ValueError as error:
-                    self._set_error(obj, str(error))
-                    return
-                continue
-
             try:
-                if start_is_bundle:
-                    bundle_start, bundle_end = self._bundle_points(obj, start_obj)
-                    self._append_segment(segments, bundle_start, bundle_end)
-                    connection = bundle_end
-                else:
-                    connection = start_obj.getGlobalPlacement().Base
-
-                if end_is_bundle:
-                    bundle_start, bundle_end = self._bundle_points(obj, end_obj)
-                    if not start_is_bundle:
-                        if start_obj is not end_obj.End:
-                            self._append_segment(segments, connection, bundle_end)
-                    self._append_segment(segments, bundle_end, bundle_start)
-                else:
-                    end_point = end_obj.getGlobalPlacement().Base
-                    if start_is_bundle and end_obj is start_obj.End:
-                        pass
-                    else:
-                        if not start_is_bundle and (
-                            end_point - connection
-                        ).Length < 1e-9:
-                            raise ValueError(
-                                f"Segment {number} has identical start and end points."
-                            )
-                        self._append_segment(segments, connection, end_point)
+                segment_start, segment_end = self._bundle_points(obj, segment_obj)
             except ValueError as error:
                 self._set_error(obj, str(error))
                 return
+            if int(directions[index]) % 2:
+                segment_start, segment_end = segment_end, segment_start
+            self._append_segment(segments, segment_start, segment_end)
 
         if not segments:
             self._set_error(obj, "The route does not contain any segments.")
@@ -734,6 +717,34 @@ class WireCableProxy:
         return start + offset, end + offset
 
     @staticmethod
+    def _capacity_error(cable, route):
+        document = cable.Document
+        if document is None:
+            return None
+        for segment in route:
+            if not is_bundle_segment(segment):
+                continue
+            limit = int(getattr(segment, "MaxCables", 0) or 0)
+            if limit <= 0:
+                continue
+            users = [
+                other
+                for other in document.Objects
+                if getattr(getattr(other, "Proxy", None), "Type", None) == "WireCable"
+                and all(
+                    is_bundle_segment(item)
+                    for item in getattr(other, "Points", [])
+                )
+                and any(item is segment for item in getattr(other, "Points", []))
+            ]
+            if len(users) > limit:
+                return (
+                    f"Bundle segment {segment.Label} is used by "
+                    f"{len(users)} cables (limit {limit})."
+                )
+        return None
+
+    @staticmethod
     def _append_segment(segments, start, end):
         if (end - start).Length >= 1e-9:
             segments.append(Segment(start, end))
@@ -965,17 +976,20 @@ class ViewProviderWireCable:
 
 
 def update_cable_dependencies(cable):
-    """Depend on ancestor groups of direct point references."""
+    """Depend on ancestor groups of bundle segment endpoint references."""
     dependencies = []
     seen = set()
-    for node in cable.Points:
-        if node is None or is_bundle_segment(node):
+    for segment in cable.Points:
+        if not is_bundle_segment(segment):
             continue
-        for group in ancestor_groups(node):
-            if group.Name in seen:
+        for ref in (getattr(segment, "Start", None), getattr(segment, "End", None)):
+            if ref is None:
                 continue
-            seen.add(group.Name)
-            dependencies.append(group)
+            for group in ancestor_groups(ref):
+                if group.Name in seen:
+                    continue
+                seen.add(group.Name)
+                dependencies.append(group)
     if "Dependencies" in cable.PropertiesList:
         cable.Dependencies = dependencies
 
@@ -1281,6 +1295,7 @@ def apply_cable_color(cable):
 def create_wire_cable(
     document,
     points,
+    directions=None,
     diameter=4.0,
     min_bend_radius=12.0,
     container=None,
@@ -1288,7 +1303,7 @@ def create_wire_cable(
     name=None,
     label=None,
 ):
-    """Create a persistent cable object with its path and bad-arc helpers."""
+    """Create a persistent cable object from ordered bundle segments."""
     cable = document.addObject("Part::FeaturePython", name or "WireCable")
     cable.Label = label or "Wire Cable"
     WireCableProxy(cable)
@@ -1302,6 +1317,9 @@ def create_wire_cable(
             pass
 
     cable.Points = list(points)
+    cable.SegmentDirections = list(
+        directions if directions is not None else [0] * len(points)
+    )
     update_cable_dependencies(cable)
     cable.Diameter = diameter
     cable.MinBendRadius = min_bend_radius

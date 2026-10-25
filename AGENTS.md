@@ -48,8 +48,8 @@ The module provides a `WireCreator` class with these main operations:
 
 ### Cable Object
 - `WireCable.py` defines a persistent `Part::FeaturePython` cable object
-- `Points` (`App::PropertyLinkListGlobal`) stores ordered start/end node references; nodes can be point references (coordinate systems, Std_Part origins, Parts/Bodies) or `WireBundleSegment` objects. Use the global list type so references inside `App::Part` scopes do not trigger warnings
-- A bundle segment in a start slot contributes its normal run (`Start` -> `End`); in an end slot it contributes its reversed run (`End` -> `Start`). Picking a bundle segment clears both fields first, then sets the clicked slot to the segment and the other slot to the segment's opposite endpoint; this redefines the whole segment instead of leaving stale references. `WireCable.execute()` expands each pair into route pieces before calling `WireCreator`
+- `Points` (`App::PropertyLinkListGlobal`) stores the ordered bundle segments that define the cable route; point-to-point route pieces are no longer supported. `SegmentDirections` (`App::PropertyIntegerList`) stores 0/1 for normal/reversed per route segment. Use the global list type so references inside `App::Part` scopes do not trigger warnings
+- `WireCable.execute()` resolves each route row into one oriented bundle run before calling `WireCreator`
 - `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
 - `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes this cable's lane offsets
 - `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` and `Preview` are stored as properties
@@ -60,8 +60,8 @@ The module provides a `WireCreator` class with these main operations:
 - Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
 - `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
 - Cable changes to `Points`, `Diameter` or `Harness` touch the harness so the lane layout is recalculated upstream
-- Cable-tool edits (segments, wire size, diameter, core, bend radius) live-update after a short debounce; with more than one segment the tool auto-creates the cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only) and show an orange status message
-- The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle/point references
+- Cable-tool edits (segments, wire size, diameter, core, bend radius) live-update after a short debounce; one valid bundle segment is enough to auto-create the cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only) and show an orange status message
+- The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle segment
 - `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
 - Linked objects create dependencies, so a document recompute updates moved inputs
 - Double-click opens `WireTaskPanel` prefilled with the stored route; edits update the same object
@@ -90,14 +90,16 @@ The module provides a `WireCreator` class with these main operations:
 - `listDisplayModes()` is a shared mode-name registry, so check the actual mode-switch child count before adding the tip's `Default` display mode.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
 - Cables link the harness through `cable.Harness`; the harness finds member cables through `InList` and never links them back (that would create a dependency cycle)
 - `Layout` stores lane offset vectors (`x,y,z`) keyed by `segmentName|cableName`; cables read their offset directly and shift both bundle-run endpoints
 - Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, a `Radius` and an `Orientation` (roll about the segment axis)
 - The lateral arrangement axis is derived from the averaged global rotations of the start/end reference frames, then rotated by the segment `Orientation`; manual roll composes on top of the input rotation
+- A cable whose bundle-segment count exceeds `MaxCables` fails validation; only complete bundle-segment routes count toward the limit
 - Use `App::PropertyLinkGlobal` for segment start/end references; normal `App::PropertyLink` triggers FreeCAD scope warnings when the referenced objects live inside an `App::Part`
 - Segment `execute()` builds a pickable cylinder from the current point placements
 - Bundle segments are independent: no bundle-level bi-arcs or segment-to-segment links
+- All segments are placed in a standard `App::DocumentObjectGroup` linked by `SegmentGroup`; the harness claims that group in the tree, so its eye toggles visibility of all segments at once
 - Do not link a segment back to its harness; the harness links segments (`Segments`) and the view provider claims them as children
 - Implement `attach()` on custom view providers and set `self.Object`; `claimChildren()` can be called after a reload without `__init__`
 - `WireBundleSegment` also has hidden `Dependencies` (ancestor groups); update them when segment endpoints change so outer Part moves recompute the segment
@@ -112,7 +114,7 @@ The module provides a `WireCreator` class with these main operations:
 - `WireTaskPanel` provides the segment/point-reference editor and geometry controls
 - `WireCable` provides the persistent cable object and double-click editing
 - `WireHarness` provides the layout authority and independent straight segment objects
-- `WireBundleTaskPanel` defines the harness and its segments; `PointReference.py` holds shared point-pick helpers
+- `WireBundleTaskPanel` defines the harness and its segments; it syncs the segment list with 3D selection (selecting a segment row selects its cylinder, and selecting a cylinder selects its row). Opening the harness tool with a segment selected selects that segment in the list and keeps it selected. Display radius is per selected segment and updates live; Add Segment copies the selected segment radius (or the current/default value). `PointReference.py` holds shared point-pick helpers
 - Installed in `freecad/WirePlugin/` inside the addon
 
 ## Setup Requirements
@@ -182,7 +184,7 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` - ferrule library
 - `freecad/WirePlugin/WireColors.py` - cable color palette and primary/tracer quadrant layouts
 - `tools/csv_to_ferrules_json.py` - example CSV-to-JSON converter
-- `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers
+- `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers (wire segments use the bundle-segment-only gate)
 - `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
 - `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets
 - `plan.md` - project milestones and terminology
