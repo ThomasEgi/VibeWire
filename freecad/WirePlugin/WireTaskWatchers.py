@@ -1,7 +1,14 @@
 """Contextual task-panel tools for WirePlugin selections."""
 
+import os
+
 import FreeCAD as App
 import FreeCADGui as Gui
+from PySide import QtCore, QtGui, QtWidgets
+
+from . import WireSelection
+
+ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 
 
 def _selection():
@@ -19,6 +26,59 @@ def _single(kind):
     return _kind(selection[0]) == kind
 
 
+class HoverToolButton(QtWidgets.QToolButton):
+    def __init__(self, text, command, enter=None, tooltip=None):
+        super().__init__()
+        self._command = command
+        self._enter = enter
+        self.setText(text)
+        self.setIcon(QtGui.QIcon(ICON))
+        self.setIconSize(QtCore.QSize(16, 16))
+        self.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.setAutoRaise(True)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+        if tooltip:
+            self.setToolTip(tooltip)
+        self.clicked.connect(self._clicked)
+
+    def enterEvent(self, event):
+        try:
+            if self._enter is not None:
+                self._enter()
+            else:
+                WireSelection.clear_hover_preview()
+        except Exception:
+            pass
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        try:
+            WireSelection.clear_hover_preview()
+        except Exception:
+            pass
+        super().leaveEvent(event)
+
+    def _clicked(self):
+        try:
+            WireSelection.clear_hover_preview()
+        except Exception:
+            pass
+        if self._command:
+            Gui.runCommand(self._command, 0)
+
+
+def _button_container(buttons):
+    widget = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    for button in buttons:
+        layout.addWidget(button)
+    return [widget]
+
+
 class WireCreateWatcher:
     def __init__(self):
         self.commands = [
@@ -33,12 +93,29 @@ class WireCreateWatcher:
 
 class WireCableWatcher:
     def __init__(self):
-        self.commands = [
-            "WirePlugin_EditWire",
-            "WirePlugin_EditStartTip",
-            "WirePlugin_EditEndTip",
-        ]
         self.title = "Wire Tools"
+        self.widgets = _button_container(
+            [
+                HoverToolButton(
+                    "Edit Wire",
+                    "WirePlugin_EditWire",
+                    WireSelection.preview_selected_cable,
+                    "Preview and edit the selected cable",
+                ),
+                HoverToolButton(
+                    "Edit Start Tip",
+                    "WirePlugin_EditStartTip",
+                    WireSelection.preview_start_tip,
+                    "Preview and edit the start tip",
+                ),
+                HoverToolButton(
+                    "Edit End Tip",
+                    "WirePlugin_EditEndTip",
+                    WireSelection.preview_end_tip,
+                    "Preview and edit the end tip",
+                ),
+            ]
+        )
 
     def shouldShow(self):
         return _single("WireCable")
@@ -46,8 +123,17 @@ class WireCableWatcher:
 
 class WireTipWatcher:
     def __init__(self):
-        self.commands = ["WirePlugin_EditTip"]
         self.title = "Tip Tools"
+        self.widgets = _button_container(
+            [
+                HoverToolButton(
+                    "Edit Tip",
+                    "WirePlugin_EditTip",
+                    WireSelection.preview_selected_tip,
+                    "Preview and edit the selected tip",
+                )
+            ]
+        )
 
     def shouldShow(self):
         return _single("WireTip")
@@ -55,12 +141,28 @@ class WireTipWatcher:
 
 class WireBundleWatcher:
     def __init__(self):
-        self.commands = [
-            "WirePlugin_EditHarness",
-            "WirePlugin_MoveSegmentStart",
-            "WirePlugin_MoveSegmentEnd",
-        ]
         self.title = "Bundle Tools"
+        self.widgets = _button_container(
+            [
+                HoverToolButton(
+                    "Edit Harness",
+                    "WirePlugin_EditHarness",
+                    tooltip="Open the harness tool",
+                ),
+                HoverToolButton(
+                    "Move Start Point",
+                    "WirePlugin_MoveSegmentStart",
+                    WireSelection.preview_segment_start,
+                    "Preview and move the bundle segment start node",
+                ),
+                HoverToolButton(
+                    "Move End Point",
+                    "WirePlugin_MoveSegmentEnd",
+                    WireSelection.preview_segment_end,
+                    "Preview and move the bundle segment end node",
+                ),
+            ]
+        )
 
     def shouldShow(self):
         return _single("WireBundleSegment")
@@ -89,4 +191,8 @@ def install():
 
 
 def uninstall():
+    try:
+        WireSelection.clear_hover_preview()
+    except Exception:
+        pass
     Gui.Control.clearTaskWatcher()

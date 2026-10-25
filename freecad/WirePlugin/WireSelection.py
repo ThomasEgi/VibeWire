@@ -190,6 +190,238 @@ def _refresh_helpers():
                 _set_helper_appearance(helper, rgb)
 
 
+
+
+_hover_preview = None
+_preview_object_name = None
+_preview_cable = None
+
+
+def _selected(kind):
+    selection = Gui.Selection.getSelection()
+    if len(selection) != 1:
+        return None
+    obj = selection[0]
+    return obj if getattr(getattr(obj, "Proxy", None), "Type", None) == kind else None
+
+
+def _cable_of_tip(tip):
+    for parent in getattr(tip, "InList", []):
+        if getattr(getattr(parent, "Proxy", None), "Type", None) == "WireCable":
+            return parent
+    return None
+
+
+def preview_start_tip():
+    cable = _selected("WireCable")
+    if cable is not None:
+        _preview_tip(cable, "StartTip")
+
+
+def preview_end_tip():
+    cable = _selected("WireCable")
+    if cable is not None:
+        _preview_tip(cable, "EndTip")
+
+
+def preview_selected_tip():
+    tip = _selected("WireTip")
+    if tip is None:
+        return
+    cable = _cable_of_tip(tip)
+    if cable is None:
+        return
+    end = "StartTip" if getattr(tip, "End", "Start") == "Start" else "EndTip"
+    _preview_tip(cable, end)
+
+
+def preview_selected_cable():
+    cable = _selected("WireCable")
+    if cable is not None:
+        _preview_cable_object(cable)
+
+
+def preview_segment_start():
+    segment = _selected("WireBundleSegment")
+    if segment is not None:
+        _preview_cap(segment, True)
+
+
+def preview_segment_end():
+    segment = _selected("WireBundleSegment")
+    if segment is not None:
+        _preview_cap(segment, False)
+
+
+def _remove_preview_object():
+    global _preview_object_name
+    if _preview_object_name is None:
+        return
+    name = _preview_object_name
+    _preview_object_name = None
+    document = App.ActiveDocument
+    if document is not None and document.getObject(name) is not None:
+        try:
+            document.removeObject(name)
+        except Exception:
+            pass
+
+
+def clear_hover_preview():
+    global _hover_preview, _preview_cable
+    _hover_preview = None
+    try:
+        Gui.Selection.clearPreselection()
+    except Exception:
+        pass
+    _remove_preview_object()
+    cable = _preview_cable
+    _preview_cable = None
+    if cable is not None:
+        try:
+            from .WireCable import apply_cable_color
+
+            apply_cable_color(cable)
+        except Exception:
+            pass
+    _refresh_helpers()
+
+
+def _preview_tip(cable, tip_name):
+    clear_hover_preview()
+    tip = getattr(cable, tip_name, None)
+    if tip is None or not tip.isValid():
+        return
+    helpers = [
+        getattr(cable, name)
+        for name in TIP_HELPERS.get(tip_name, ())
+        if getattr(cable, name, None) is not None
+        and getattr(cable, name).isValid()
+    ]
+    has_geometry = any(
+        getattr(helper, "Shape", None) is not None
+        and not helper.Shape.isNull()
+        for helper in helpers
+    )
+    if has_geometry:
+        for helper in helpers:
+            _set_helper_appearance(helper, (0.0, 1.0, 0.0))
+        return
+    _preview_cable_end(cable, tip_name == "StartTip")
+
+
+def _preview_cable_object(cable):
+    clear_hover_preview()
+    global _preview_cable
+    view = getattr(cable, "ViewObject", None)
+    if view is None:
+        return
+    _preview_cable = cable
+    shape = getattr(cable, "Shape", None)
+    count = len(shape.Faces) if shape is not None else 0
+    transparency = getattr(view, "Transparency", 0)
+    material = App.Material()
+    material.DiffuseColor = (0.0, 1.0, 0.0, 1.0)
+    material.AmbientColor = (0.3333, 0.3333, 0.3333, 1.0)
+    material.SpecularColor = (0.5333, 0.5333, 0.5333, 1.0)
+    material.EmissiveColor = (0.0, 0.0, 0.0, 1.0)
+    material.Shininess = 0.9
+    material.Transparency = 0.0
+    try:
+        if count:
+            view.ShapeAppearance = [material] * count
+        view.ShapeColor = (0.0, 1.0, 0.0)
+        view.Transparency = transparency
+    except Exception:
+        pass
+
+
+def _preview_cable_end(cable, at_start):
+    path = getattr(cable, "PathObject", None)
+    if path is None or not path.isValid() or path.Shape is None:
+        return
+    edges = list(path.Shape.Edges)
+    if not edges:
+        return
+    edge = edges[0 if at_start else -1]
+    shape = _edge_tube(edge, max(0.2, cable.Diameter.Value * 0.52))
+    if shape is None:
+        shape = edge
+    _add_preview_object(shape, green=True)
+
+
+def _edge_tube(edge, radius):
+    try:
+        import Part
+
+        first = edge.valueAt(edge.FirstParameter)
+        tangent = edge.tangentAt(edge.FirstParameter)
+        profile = Part.Wire(
+            [Part.Circle(first, tangent, radius).toShape()]
+        )
+        wire = Part.Wire([edge])
+        shape = wire.makePipeShell([profile], True, True, 0)
+        if shape is not None and not shape.isNull():
+            return shape
+    except Exception:
+        pass
+    return None
+
+
+def _preview_cap(segment, at_start):
+    clear_hover_preview()
+    start = getattr(segment, "Start", None)
+    end = getattr(segment, "End", None)
+    if start is None or end is None:
+        return
+    start = start.getGlobalPlacement().Base
+    end = end.getGlobalPlacement().Base
+    direction = end - start
+    if direction.Length < 1e-9:
+        return
+    direction.normalize()
+    radius = getattr(segment, "Radius", None)
+    radius = radius.Value if radius is not None else 0.0
+    if radius <= 0.0:
+        return
+    point = start if at_start else end
+    center = point - direction * 0.02 if at_start else point + direction * 0.02
+    try:
+        import Part
+
+        face_circle = Part.Circle(center, direction, radius)
+        face = Part.Face(Part.Wire([face_circle.toShape()]))
+        edge_circle = Part.Circle(point, direction, radius + 0.5).toShape()
+        edge = Part.Wire([edge_circle])
+        _add_preview_object(
+            Part.makeCompound([face, edge]), green=True, line_width=6
+        )
+    except Exception:
+        pass
+
+
+def _add_preview_object(shape, green=True, line_width=1):
+    global _preview_object_name
+    _remove_preview_object()
+    document = App.ActiveDocument
+    if document is None:
+        return
+    try:
+        obj = document.addObject("Part::Feature", "WireHoverPreview")
+        obj.Label = "Wire Hover Preview"
+        obj.Shape = shape
+        if green:
+            obj.ViewObject.ShapeColor = (0.0, 1.0, 0.0)
+            obj.ViewObject.LineColor = (0.0, 1.0, 0.0)
+        obj.ViewObject.LineWidth = line_width
+        obj.ViewObject.Transparency = 0
+        obj.ViewObject.Visibility = True
+        obj.ViewObject.ShowInTree = False
+        _preview_object_name = obj.Name
+    except Exception:
+        _preview_object_name = None
+
+
 def schedule_select_tool_object(obj):
     """Keep the object being edited selected and highlighted."""
     if obj is None:

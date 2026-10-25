@@ -63,3 +63,6 @@
 - 2026-10-25: Added workbench context-menu actions for cables, tips, harnesses and bundle segments, including move-to-endpoint placement shortcuts.
 - 2026-10-25: Added WirePlugin workbench context-menu entries for editing wires/tips/harnesses and moving bundle segment endpoints via Std_Placement.
 - 2026-10-25: Added Workbench task watchers so the Tasks panel lists Create/Wire/Tip/Bundle/Harness tools for the current selection.
+- 2026-10-25: Added hover previews to Wire/Tip/Bundle task-watcher buttons for tips and bundle segment end caps.
+- 2026-10-25: Added visible hover previews for cables, offset-tip path segments and opaque green bundle cap faces; bundle segments now default to dark grey/65% transparency.
+- 2026-10-25: Bundle cap hover preview now includes a thick green circular edge so it remains visible when the cap face is occluded.

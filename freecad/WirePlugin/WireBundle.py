@@ -525,8 +525,8 @@ def create_bundle_segment(bundle, start, end, radius=10.0):
     update_segment_dependencies(segment)
     if App.GuiUp:
         try:
-            segment.ViewObject.ShapeColor = (0.35, 0.7, 0.9)
-            segment.ViewObject.Transparency = 60
+            segment.ViewObject.ShapeColor = (0.33, 0.33, 0.36)
+            segment.ViewObject.Transparency = 65
         except Exception:
             pass
     segments = list(bundle.Segments)
