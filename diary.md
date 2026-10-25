@@ -66,3 +66,4 @@
 - 2026-10-25: Added hover previews to Wire/Tip/Bundle task-watcher buttons for tips and bundle segment end caps.
 - 2026-10-25: Added visible hover previews for cables, offset-tip path segments and opaque green bundle cap faces; bundle segments now default to dark grey/65% transparency.
 - 2026-10-25: Bundle cap hover preview now includes a thick green circular edge so it remains visible when the cap face is occluded.
+- 2026-10-25: Bundle endpoint move commands now use Std_TransformManip when available and fall back to Std_Placement.

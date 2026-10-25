@@ -181,7 +181,7 @@ class MoveSegmentStartCommand:
         return {
             "Pixmap": ICON,
             "MenuText": "Move Start Point",
-            "ToolTip": "Select the bundle segment start node and open its placement",
+            "ToolTip": "Select the bundle segment start node and transform it",
         }
 
     def Activated(self):
@@ -199,7 +199,7 @@ class MoveSegmentEndCommand:
         return {
             "Pixmap": ICON,
             "MenuText": "Move End Point",
-            "ToolTip": "Select the bundle segment end node and open its placement",
+            "ToolTip": "Select the bundle segment end node and transform it",
         }
 
     def Activated(self):
@@ -217,6 +217,13 @@ def _move_point(point):
         return
     Gui.Selection.clearSelection()
     Gui.Selection.addSelection(point)
+    if Gui.isCommandActive("Std_TransformManip"):
+        Gui.runCommand("Std_TransformManip", 0)
+        try:
+            if Gui.ActiveDocument.getInEdit() is not None:
+                return
+        except Exception:
+            pass
     Gui.runCommand("Std_Placement", 0)
 
 

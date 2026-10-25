@@ -106,7 +106,7 @@ The module provides a `WireCreator` class with these main operations:
 ### Plugin Structure
 - Workbench: `WirePluginWorkbench` (registered via `FreeCADGui.addWorkbench()`)
 - Toolbar commands: `WirePlugin_CreateWire` (cable) and `WirePlugin_DefineHarness` (harness segments/gap)
-- Context-menu commands: selected cables offer Edit Wire/Start Tip/End Tip; selected tips offer Edit Tip; selected bundle segments offer Edit Harness plus Move Start/End Point (selects the underlying node and opens Std_Placement); selected harnesses offer Edit Harness
+- Context-menu commands: selected cables offer Edit Wire/Start Tip/End Tip; selected tips offer Edit Tip; selected bundle segments offer Edit Harness plus Move Start/End Point (selects the underlying node and opens the transform gizmo, falling back to Std_Placement when transform is unavailable); selected harnesses offer Edit Harness
 - Workbench task watchers populate the Tasks panel contextually: Create tools with no selection, Wire Tools for a cable, Tip Tools for a tip, Bundle Tools for a segment, and Harness Tools for a harness
 - Wire/Tip/Bundle task-watcher entries are custom hover buttons. Hovering no longer changes selection: Edit Wire tints the cable green, start/end tips recolor their helpers (or show a temporary green tube on the first/last path segment when no tip geometry exists), and bundle Move Start/End shows a temporary opaque green cap face plus its circular edge
 - `WireTaskPanel` provides the segment/point-reference editor and geometry controls
