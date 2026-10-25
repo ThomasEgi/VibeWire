@@ -59,3 +59,7 @@
 - 2026-10-25: Added a tip-level Transparency view property that applies to the tip/ferrule helper geometry.
 - 2026-10-25: Selection highlighting now preserves helper transparency, including changes made while the tip is selected.
 - 2026-10-25: Refactored helper selection into one queued reconciler with canonical helper materials; fixes tip-to-tip highlighting races while preserving transparency and clearing stale tree state.
+- 2026-10-25: Added Dark Blue to the primary/tracer cable color palette.
+- 2026-10-25: Added workbench context-menu actions for cables, tips, harnesses and bundle segments, including move-to-endpoint placement shortcuts.
+- 2026-10-25: Added WirePlugin workbench context-menu entries for editing wires/tips/harnesses and moving bundle segment endpoints via Std_Placement.
+- 2026-10-25: Added Workbench task watchers so the Tasks panel lists Create/Wire/Tip/Bundle/Harness tools for the current selection.

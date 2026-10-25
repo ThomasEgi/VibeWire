@@ -55,7 +55,7 @@ The module provides a `WireCreator` class with these main operations:
 - `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` and `Preview` are stored as properties
 - `WireSizeMM2` is 0 for custom wire sizes; standard sizes enforce the matching core area and derive the cable diameter from the ferrule sleeve (`d2 - 1 mm`)
 - `CableColor` is the primary cable-level `App::PropertyEnumeration`; `CableColorTracer` is the tracer enumeration (`None` for solid). `apply_cable_color()` maps them to the cable's `ShapeColor`/`ShapeAppearance`
-- The cable tool has separate primary and tracer dropdowns. Primary choices include PE, Black, Brown, Red, Orange, Yellow, Green, Blue, Violet, Grey, White, Pink and Turquoise; tracer choices are `None` plus the same colors
+- The cable tool has separate primary and tracer dropdowns. Primary choices include PE, Black, Brown, Red, Orange, Yellow, Green, Blue, Dark Blue, Violet, Grey, White, Pink and Turquoise; tracer choices are `None` plus the same colors
 - Selecting the PE shortcut sets primary Green and tracer Yellow. A non-`None` tracer uses three primary quadrants and one tracer quadrant. Multi-color cables are built from four longitudinal sector solids and colored per face; single-color cables keep the normal swept tube
 - Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
 - `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
@@ -106,6 +106,8 @@ The module provides a `WireCreator` class with these main operations:
 ### Plugin Structure
 - Workbench: `WirePluginWorkbench` (registered via `FreeCADGui.addWorkbench()`)
 - Toolbar commands: `WirePlugin_CreateWire` (cable) and `WirePlugin_DefineHarness` (harness segments/gap)
+- Context-menu commands: selected cables offer Edit Wire/Start Tip/End Tip; selected tips offer Edit Tip; selected bundle segments offer Edit Harness plus Move Start/End Point (selects the underlying node and opens Std_Placement); selected harnesses offer Edit Harness
+- Workbench task watchers populate the Tasks panel contextually: Create tools with no selection, Wire Tools for a cable, Tip Tools for a tip, Bundle Tools for a segment, and Harness Tools for a harness
 - `WireTaskPanel` provides the segment/point-reference editor and geometry controls
 - `WireCable` provides the persistent cable object and double-click editing
 - `WireHarness` provides the layout authority and independent straight segment objects
@@ -175,6 +177,7 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/WireTipTaskPanel.py` - cable tip settings editor
 - `freecad/WirePlugin/FerruleData.py` - JSON ferrule library loader and helpers
 - `freecad/WirePlugin/WireSelection.py` - remaps core/ferrule helper selection to the owning tip
+- `freecad/WirePlugin/WireTaskWatchers.py` - contextual task-panel tool groups
 - `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` - ferrule library
 - `freecad/WirePlugin/WireColors.py` - cable color palette and primary/tracer quadrant layouts
 - `tools/csv_to_ferrules_json.py` - example CSV-to-JSON converter

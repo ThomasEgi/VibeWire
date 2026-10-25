@@ -3,7 +3,7 @@ import os
 
 import FreeCADGui
 
-from . import WireSelection
+from . import WireSelection, WireTaskWatchers
 
 WireSelection.install()
 
@@ -33,11 +33,36 @@ class WirePluginWorkbench(FreeCADGui.Workbench):
         self.appendMenu("WirePlugin", wire_cmds + bundle_cmds)
         self._initialized = True
 
+    def ContextMenu(self, recipient):
+        if recipient not in ("View", "Tree"):
+            return
+        selection = FreeCADGui.Selection.getSelection()
+        if len(selection) != 1:
+            return
+        kind = getattr(getattr(selection[0], "Proxy", None), "Type", None)
+        commands = {
+            "WireCable": [
+                "WirePlugin_EditWire",
+                "WirePlugin_EditStartTip",
+                "WirePlugin_EditEndTip",
+            ],
+            "WireTip": ["WirePlugin_EditTip"],
+            "WireBundleSegment": [
+                "WirePlugin_EditHarness",
+                "WirePlugin_MoveSegmentStart",
+                "WirePlugin_MoveSegmentEnd",
+            ],
+            "WireHarness": ["WirePlugin_EditHarness"],
+        }.get(kind)
+        if commands:
+            self.appendContextMenu("", "Separator")
+            self.appendContextMenu("", commands)
+
     def Activated(self):
-        pass
+        WireTaskWatchers.install()
 
     def Deactivated(self):
-        pass
+        WireTaskWatchers.uninstall()
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"

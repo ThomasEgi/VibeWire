@@ -181,7 +181,7 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 
 ### Source Data
 - Input CSV: `wire_end_sleeves_DIN_46228_T4_complete.csv` in the project directory.
-- Cable colors use separate primary and tracer selections rather than a long combined-code list. The palette contains the international individual colors plus previously used Pink and Turquoise; PE is a primary shortcut that sets Green/Yellow.
+- Cable colors use separate primary and tracer selections rather than a long combined-code list. The palette contains the international individual colors plus previously used Pink, Turquoise and Dark Blue; PE is a primary shortcut that sets Green/Yellow.
 - Columns: `cross_section_mm2`, `AWG`, `color_code_DIN`, `color_code_T`, `color_code_W`, `total_legnth_l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm`, `standard`, `Not according to norm`.
 - Normalize `total_legnth_l1_mm` to `total_length_l1_mm` in the JSON.
 - `L1` is the total ferrule length including the protective plastic sleeve over the wire insulation.

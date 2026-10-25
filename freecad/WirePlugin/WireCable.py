@@ -883,10 +883,6 @@ class ViewProviderWireCable:
     def setupContextMenu(self, vobj, menu):
         from PySide import QtGui
 
-        edit_action = QtGui.QAction("Edit Wire", menu)
-        edit_action.triggered.connect(lambda: self.doubleClicked(vobj))
-        menu.addAction(edit_action)
-
         recompute_action = QtGui.QAction("Recompute Wire", menu)
         recompute_action.triggered.connect(
             lambda: self._recompute(vobj.Object)

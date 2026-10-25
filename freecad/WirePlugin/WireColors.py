@@ -10,6 +10,7 @@ SINGLE_COLORS = (
     ("Yellow", "#f2c200"),
     ("Green", "#2e7d32"),
     ("Blue", "#1e5aa8"),
+    ("Dark Blue", "#0b2e59"),
     ("Violet", "#6a1b9a"),
     ("Grey", "#6e6e6e"),
     ("White", "#f5f5f5"),
