@@ -112,6 +112,7 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - [x] **Bundle-only wire routing**: Every cable route is an ordered list of bundle segments. Each segment has an explicit Normal/Reversed direction toggle; routes may use subsets of the bundle and branch in/out
 - [x] **Single-object wire segments**: The wire editor selects one bundle segment per route row instead of separate start/end point references; one pick defines the segment and Reverse Segment flips its direction
 - [x] **Segment cable limit**: Each bundle segment has `MaxCables` (0 = unlimited). Endpoint segments can be limited to 1; over-capacity cables fail validation
+- [x] **Segment group**: Keep all harness segments in a standard group so one eye toggle shows/hides the whole bundle; the harness claims the group in the tree
 - [x] **Wire-level bi-arcs**: Generate transitions between consecutive route pieces with the M1 bi-arc solver; the bundle itself remains straight segments only
 - [x] **Place cables side by side**: For each bundle segment, arrange routed cables with a definable gap using a linear or circular cross-section pattern
 - [x] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters in the linear pattern; the circular pattern uses a clearance-based ring radius
@@ -130,7 +131,7 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - **Bi-arc generation**: Resolve every route row into its oriented bundle run. Feed the ordered runs to the M1 `WireCreator`, which inserts bi-arcs where runs meet; gaps and reversals are handled at cable level, not bundle level.
 - **Branching**: A cable may route over any ordered subset of bundle segments. Per-segment member lists are derived from the cables' routes, so cables can join or leave the bundle between segments without changing the bundle segment definitions.
 - **Geometry/recompute**: The harness is upstream of its cables: cables link `cable.Harness`, while the harness finds cables through `InList` and never links them. Harness layout depends on segment geometry and cable order/gap/diameter; cable changes touch the harness explicitly. Segments and cables also keep hidden ancestor-group dependencies so moving an enclosing `App::Part`/Body recomputes them. Recomputing follows segments -> harness layout -> cables -> paths/sweeps/validation.
-- **UI**: Harness editor for adding/removing segments, picking start/end references, setting `MaxCables`, gap, pattern and per-segment rotation. Cable route editor for adding bundle-segment rows, with one picker and a Reverse Segment direction toggle. The harness claims its segments and cable groups in the tree. Display radius is edited per selected segment and updates live. Advanced pattern/placement editing is deferred to M2b.
+- **UI**: Harness editor for adding/removing segments, picking start/end references, setting `MaxCables`, gap, pattern, per-segment rotation and display radius. Segments are grouped in a standard visibility group. Cable route editor adds bundle-segment rows with one picker and a Reverse Segment toggle. The harness claims the segment group and cable groups in the tree. Advanced pattern/placement editing is deferred to M2b.
 - **Integration**: Use the same point-reference model as M1 so bundle segments can be driven by PartDesign/Assembly geometry and standard placement gizmos.
 
 ### Acceptance Criteria
@@ -145,7 +146,8 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - Linear patterns keep edge-to-edge gaps consistent for different diameters; circular patterns keep at least the requested clearance
 - The harness computes lane offsets and cables read them from the harness
 - Cable changes (route, diameter, harness membership) invalidate and recompute the harness layout
-- Per-segment arrangement orientation can be set and changed
+- Per-segment arrangement orientation and display radius can be set and changed
+- The harness segment group eye toggles all segment visibility together
 - Updating segment references, routes, order, gap or diameters recomputes affected cable geometry
 
 > **Scope note:** Basic circular/linear patterns and manual per-segment rotation are in M2. The dedicated pattern and placement editor is tracked separately in Milestone 2b.
@@ -212,7 +214,7 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - [x] **Stripped length**: The cable's stripped length is the conductive tip length `L2` plus the 45 degree cone length; trim the outer insulation accordingly and expose the core.
 - [x] **Core compatibility**: For a predefined cross-section, enforce the corresponding core size. Ferrules are matched to that cross-section and color code. Validate that the core fits inside `d1`.
 - [x] **Persistence/recompute (data/menus)**: Store wire size, ferrule type/variant, sleeve color system and cable insulation color on the cable/tips; cable stripping/core geometry recomputes on change.
-- [x] **Live tool updates**: Changes to segments/references, wire size, diameters or bend radius update the cable immediately with a short debounce; once more than one segment exists the tool auto-creates the path/cable. Incomplete routes keep the valid prefix visible as the red path (preview mode) and show an orange status message.
+- [x] **Live tool updates**: Changes to bundle segments, wire size, diameters or bend radius update the cable immediately with a short debounce; one valid bundle segment is enough to auto-create the path/cable. Incomplete routes keep the valid prefix visible as the red path (preview mode) and show an orange status message.
 
 ### Technical Details
 - JSON structure: top-level `schema_version`, `source_csv`, `units`, `color_palette`, and `cross_sections`. Each cross-section has `cross_section_mm2`, `awg`, `color_codes` (DIN/T/W), derived `cable_diameter_mm`, and `ferrules`. Each ferrule entry has `type`, `standard`, and `variants`; each variant contains `l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm`, `conforming` and an optional `note`.
@@ -250,6 +252,41 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - Ferrule variants match the selected cross-section and color code.
 - Wire insulation colors are cable-level and independent from the ferrule sleeve/cone color.
 - The ferrule standard is stored on each ferrule type entry, not globally.
+
+## Milestone 2C.1: Post-Ferrule Workflow and Visibility Polish (No Regrets)
+
+Goal: Record the workflow, selection and visibility features that grew organically after the ferrule milestone.
+
+> **Scope note:** These features were added while validating real routing workflows. They are intentionally kept in the plan. **(no regrets adding these)**
+
+### Requirements
+- [x] **Bundle-only cable routes**: Require every cable route to be an ordered list of bundle segments with per-segment Normal/Reversed direction; remove point-to-point route pieces.
+- [x] **One-pick wire rows**: Simplify the wire editor to one bundle-segment picker and a Reverse Segment control per row.
+- [x] **Segment capacity**: Add per-segment `MaxCables` with hard validation; `0` is unlimited and endpoints can be limited to `1`.
+- [x] **Segment group**: Put all harness segments in a standard visibility group whose eye toggles the whole bundle.
+- [x] **Live segment radius**: Move display radius into the selected-segment controls and update only that segment live; Add Segment copies the active/default radius.
+- [x] **Context actions**: Add task-panel and context-menu actions for editing cables/tips/harnesses and moving bundle endpoints with the transform gizmo, falling back to placement.
+- [x] **Contextual task watchers**: Populate the Tasks panel with Create/Wire/Tip/Bundle/Harness tools for the current selection.
+- [x] **Hover previews**: Highlight the cable, start/end tip helpers, offset-tip path segments and bundle cap endpoints from task buttons without changing selection.
+- [x] **Harness selection sync**: Sync the harness segment list with 3D selection in both directions; opening the harness tool from a segment selects its row.
+- [x] **Tip selection reconciler**: Replace incremental tip-helper highlight callbacks with one queued reconciler; preserve ambient colors and transparency and remove stale tree backgrounds/current items.
+- [x] **Tip transparency**: Add a tip-level transparent setting that applies to the core/ferrule helper geometry.
+- [x] **View-provider robustness**: Keep no-shape tips/harnesses showable and initialize new bundle-segment Part view providers so visibility, tree icons and group toggles work.
+
+### Technical Details
+- The selection reconciler reads `Gui.Selection`, rebuilds canonical helper materials (copper core, metallic ferrule, harness sleeve color), preserves transparency and applies green to selected tips. Helper clicks remap to the owning tip; no helper rows are exposed.
+- Hover previews use temporary green overlay geometry for path segments and opaque cap faces with a bold circular edge; cable hover restores its computed primary/tracer appearance on leave.
+- The harness segment group is linked through `SegmentGroup`; the harness view provider claims it. Segment radius and `MaxCables` are per-segment properties, with radius applied live.
+- Task watchers use custom hover buttons for previews; standard command-list watchers remain for Create and Harness tools.
+- Tool open preserves the edited object; tool close removes only that object and its tree current/background state. Empty-space clearing removes stale selection backgrounds.
+
+### Acceptance Criteria
+- Wire rows select one bundle segment and can be individually reversed.
+- Over-capacity segments fail validation and endpoint limits can prevent additional routing.
+- The segment group eye toggles all segment visibility.
+- Contextual tool groups appear in the Tasks panel and hover previews identify the target geometry.
+- Harness list and 3D selection stay synchronized.
+- Tip visibility/transparency and tree selection state remain consistent across open/close and selection changes.
 
 ## Milestone 2D: Tool Transactions and Undo (Follow-up)
 Goal: Make tool-session edits reversible as one operation and support normal undo while tools are open.

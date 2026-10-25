@@ -28,166 +28,186 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 ## Architecture Notes
 
 ### Core Module: WireCreator.py
-The module provides a `WireCreator` class with these main operations:
-- `__init__(min_bend_radius=12.0)` - constructor with configurable minimum bend radius
-- `create_wire(segments)` - builds path from segment chain with bi-arc connections
-- `check_wire()` - validates bend radius and arc length constraints; returns failed arcs
-- `visualize_bad_arcs(diameter=4.0)` - highlights arcs failing constraints
-- `make_cable(wire, diameter=4.0)` - sweeps circular profile along path
+`WireCreator` provides:
+- `create_wire(segments)` — builds a path from a straight-segment chain with bi-arc transitions.
+- `check_wire()` — validates bend radius and arc-length constraints; returns failed arcs.
+- `visualize_bad_arcs(diameter=4.0)` — creates temporary red/orange bad-arc display objects.
+- `make_cable(wire, diameter=4.0)` — sweeps a circular profile for a single-color cable.
+- `make_cable_sectors(wire, diameter=4.0)` — builds four longitudinal sector solids for multi-color cables.
 
 ### Bi-Arc Solver
-- Custom Python implementation (no FreeCAD built-in bi-arc solver)
-- Computes joint point and two arc segments for G1 continuity
-- Falls back to straight line if geometry is degenerate (colinear segments)
-- Each bi-arc may be one or two arcs depending on curvature
+- Custom Python implementation; no FreeCAD built-in bi-arc solver.
+- Computes a joint point and one or two arc segments for G1 continuity.
+- Falls back to a straight line when the geometry is degenerate or colinear.
+- `WireCable` uses the same solver between consecutive bundle-segment runs.
 
 ### Sweep Generation
-- Uses `Part.makeCircle` for circular profile
-- Uses `Part.Wire.makePipeShell` to sweep profile along path
-- Supports Frenet frame for following curvature (default `USE_FRENET=True`)
+- Uses `Part.makeCircle` for the profile and `Part.Wire.makePipeShell` for the sweep.
+- Frenet framing is used by default (`USE_FRENET=True`).
+- Single-color cables use one swept tube; multi-color cables use four sector solids with per-face `ShapeAppearance`.
 
 ### Cable Object
-- `WireCable.py` defines a persistent `Part::FeaturePython` cable object
-- `Points` (`App::PropertyLinkListGlobal`) stores the ordered bundle segments that define the cable route; point-to-point route pieces are no longer supported. `SegmentDirections` (`App::PropertyIntegerList`) stores 0/1 for normal/reversed per route segment. Use the global list type so references inside `App::Part` scopes do not trigger warnings
-- `WireCable.execute()` resolves each route row into one oriented bundle run before calling `WireCreator`
-- `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
-- `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes this cable's lane offsets
-- `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` and `Preview` are stored as properties
-- `WireSizeMM2` is 0 for custom wire sizes; standard sizes enforce the matching core area and derive the cable diameter from the ferrule sleeve (`d2 - 1 mm`)
-- `CableColor` is the primary cable-level `App::PropertyEnumeration`; `CableColorTracer` is the tracer enumeration (`None` for solid). `apply_cable_color()` maps them to the cable's `ShapeColor`/`ShapeAppearance`
-- The cable tool has separate primary and tracer dropdowns. Primary choices include PE, Black, Brown, Red, Orange, Yellow, Green, Blue, Dark Blue, Violet, Grey, White, Pink and Turquoise; tracer choices are `None` plus the same colors
-- Selecting the PE shortcut sets primary Green and tracer Yellow. A non-`None` tracer uses three primary quadrants and one tracer quadrant. Multi-color cables are built from four longitudinal sector solids and colored per face; single-color cables keep the normal swept tube
-- Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
-- `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
-- Cable changes to `Points`, `Diameter` or `Harness` touch the harness so the lane layout is recalculated upstream
-- Cable-tool edits (segments, wire size, diameter, core, bend radius) live-update after a short debounce; one valid bundle segment is enough to auto-create the cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only) and show an orange status message
-- The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle segment
-- `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
-- Linked objects create dependencies, so a document recompute updates moved inputs
-- Double-click opens `WireTaskPanel` prefilled with the stored route; edits update the same object
-- Path, bad-arc, core and ferrule helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`, `StartCoreObject`/`EndCoreObject` and `StartFerruleMetal`/`EndFerruleMetal`/`StartFerruleSleeve`/`EndFerruleSleeve`
-- `Dependencies` (`App::PropertyLinkListGlobal`) stores ancestor GeoFeatureGroups of the point references so moving an enclosing `App::Part`/Body recomputes the cable
-- Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
+- `WireCable.py` defines a persistent `Part::FeaturePython` cable object.
+- `Points` (`App::PropertyLinkListGlobal`) is now the ordered list of bundle segments defining the route. Point-to-point route pieces are no longer supported; legacy routes fail validation with a rebuild message.
+- `SegmentDirections` (`App::PropertyIntegerList`) stores 0/1 per route segment for normal/reversed traversal.
+- `WireCable.execute()` resolves each route row into one oriented bundle run before calling `WireCreator`.
+- `Label` is the user-facing wire name; empty names are generated from the first effective start endpoint and last effective end endpoint, including route direction. The owning group label is `<name> Group`.
+- `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes lane offsets. Cables link the harness; never link a group back to a cable (that creates a dependency cycle).
+- Stored properties include `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status`, `Preview`, `CableColor` and `CableColorTracer`.
+- `WireSizeMM2` is 0 for custom sizes; standard sizes enforce the matching core area and derive cable diameter from the ferrule sleeve (`d2 - 1 mm`).
+- `CableColor` is the primary color enum and `CableColorTracer` is the tracer enum (`None` for solid). Available colors are Black, Brown, Red, Orange, Yellow, Green, Blue, Dark Blue, Violet, Grey, White, Pink and Turquoise.
+- The PE shortcut sets primary Green and tracer Yellow. A non-`None` tracer uses three primary quadrants and one tracer quadrant. Multi-color cables use four longitudinal sector solids; single-color cables use the normal swept tube.
+- `MaxCables` is enforced per route segment: if any used bundle segment exceeds its limit, the cable fails validation. 0 means unlimited; endpoint segments can be set to 1.
+- Core size is wire-level and shared by both tips. Tips are edited through the cable’s `InList`; there is no tip→cable link.
+- `StartTip`/`EndTip` link to per-end `WireTip` objects. Tip `LengthOffset` trims visible geometry while `Length` remains total.
+- Cable-tool edits live-update after a short debounce. One valid bundle segment is enough to create a cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only), and show an orange status.
+- The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle segment.
+- `execute()` rebuilds geometry from the bundle segment endpoints and depends on ancestor groups of those endpoints.
+- Double-clicking a cable opens `WireTaskPanel` prefilled with the stored route; edits update the same object.
+- Path, bad-arc, core and ferrule display objects are linked through `PathObject`, `BadRadiusObject`, `BadLengthObject`, `StartCoreObject`/`EndCoreObject`, and `StartFerruleMetal`/`EndFerruleMetal`/`StartFerruleSleeve`/`EndFerruleSleeve`.
+- `Dependencies` stores ancestor `GeoFeatureGroup`s of the bundle-segment endpoint references so moving an enclosing `App::Part`/Body recomputes the cable.
+- Do not store a link back to the owning group; find it through `InList`.
 
 ### Cable Tip Object
-- `WireTip.py` defines `WireTip` (`App::FeaturePython`) with `TipType` (`Length offset`/`Stripped wire`/`Ferrule`), `LengthOffset`, `StrippedLength`, `FerruleType`, `FerruleVariant`, `FerruleColorSystem` and `End` (`Start`/`End`)
-- Tips are created in the owning cable group and linked from the cable through `StartTip`/`EndTip`
-- Tips do not link back to the cable; they find it through `InList`
-- Double-click a tip to open `WireTipTaskPanel`; core size lives on the cable and applies to both tips. Ferrule and expanded conductor presets can be added there later
-- Cable geometry is trimmed from the route ends by the tip settings; `Length` remains full and `CableOnlyLength` subtracts only connector-style length offsets (stripped conductor keeps the cable length)
-- `LengthOffset`/`StrippedLength` are capped to just below the first/last route-piece length (`StartTipLength`/`EndTipLength` minus `TIP_OFFSET_MARGIN` = 0.01 mm); the tip panel applies changes live and restores the previous values on cancel
-- Stripped-wire tips set the outer cable back by `StrippedLength`; `StartCoreObject`/`EndCoreObject` display copper-colored core cylinders along the end pieces, clamped to the cable diameter
-- Ferrule tips use the selected JSON variant: the cable builds a hollow metallic tip, a colored plastic cone and sleeve, and the exposed core over `L2 + cone`. Sleeve color comes from the selected DIN/T/W code. Ferrule `L1` is validated against the tip-segment length and flagged in the tip panel when too long.
-- Enabling a ferrule tip selects the shortest conforming variant for the current cross-section/type; switching the cable cross-section resets ferrule tips to the shortest conforming variant for the new size. If no variant is marked conforming, the shortest available variant is used.
-- Clicking a core/ferrule helper remaps the selection to its owning `WireTip`; helper rows stay hidden. A single queued selection reconciler then restores canonical helper materials and applies the green highlight to all helpers of the selected tips.
-- The reconciler reads `Gui.Selection` after any selection event instead of clearing/applying highlights incrementally; this avoids callback-order races when switching between tips. Helper materials preserve current transparency, use neutral ambient colors, and are recomputed from cable/tip data. Clearing the selection also clears stale tree selection/current/background state.
-- Opening a wire, tip or harness tool re-selects the edited object after FreeCAD enters edit mode; a selected tip therefore keeps its helper geometry highlighted.
-- Closing a wire, tip or harness task panel deselects only the object edited by that tool, clears its shortened tree current-item highlight and any stale selection background, and leaves separately selected objects selected.
-- Toggling a tip's eye icon syncs visibility of its core/ferrule helper geometry; toggle it in the ViewProvider `onChanged`/`attach` handler.
-- Tip view providers add a `Transparency` view property and sync it to the tip's core/ferrule helper geometry, matching the cable transparency behavior.
-- Tip view providers add an empty Coin display mode and set `DefaultMode=0` so FreeCAD treats the no-shape tip as showable; otherwise the tree eye icon stays grey even when `Visibility` is true.
-- Locate the tip's mode switch through `ViewObject.RootNode` (find the child `SoSwitch`); after a view-provider proxy reload, `ViewObject.SwitchNode` can raise `No SWIG wrapped library loaded`.
-- `listDisplayModes()` is a shared mode-name registry, so check the actual mode-switch child count before adding the tip's `Default` display mode.
+- `WireTip.py` defines `WireTip` (`App::FeaturePython`) with `TipType` (`Length offset`/`Stripped wire`/`Ferrule`), `LengthOffset`, `StrippedLength`, `FerruleType`, `FerruleVariant`, `FerruleColorSystem` and `End`.
+- Tips are created in the owning cable group and linked through `StartTip`/`EndTip`; they find the cable through `InList`.
+- Double-click a tip to open `WireTipTaskPanel`; core size lives on the cable and applies to both tips.
+- `LengthOffset`/`StrippedLength` are capped below the first/last route piece length using `TIP_OFFSET_MARGIN = 0.01 mm`; the tip panel applies live and restores previous values on cancel.
+- Stripped-wire tips set the outer cable back by `StrippedLength`; core helpers display copper-colored cylinders along the end pieces.
+- Ferrule tips use the JSON variant: metallic tip, colored plastic cone/sleeve, and exposed core over `L2 + cone`. Sleeve color comes from the selected DIN/T/W code. `L1` is validated against the available tip-segment length.
+- Enabling a ferrule tip selects the shortest conforming variant for the current cross-section/type. Switching cross-section resets ferrule tips to the new size’s shortest conforming variant; if none conform, the shortest available variant is used.
+- Tip view providers add a dynamic `Transparency` view property and sync it to the core/ferrule helpers.
+- Tip view providers add an empty Coin display mode and set `DefaultMode=0` so the no-shape tip is showable; otherwise the tree eye remains grey.
+- Locate the tip mode switch through `ViewObject.RootNode`; `ViewObject.SwitchNode` can raise `No SWIG wrapped library loaded` after proxy reloads.
+- `listDisplayModes()` is a shared registry, so check the actual mode-switch child count before adding `Default`.
+- Clicking a core/ferrule helper remaps selection to the owning tip; hidden helper rows never pop into the tree.
+- A single queued selection reconciler reads `Gui.Selection`, restores canonical helper materials, preserves helper transparency, and highlights all helpers of selected tips.
+- Helper materials use neutral ambient colors and preserve current transparency. Clearing selection also clears stale tree selection/current/background state.
+- Opening a wire, tip or harness tool re-selects the edited object (or the selected segment for the harness) after FreeCAD enters edit mode.
+- Closing a tool deselects only the edited object, clears its current-item/background state, and leaves other selected objects selected.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
-- Cables link the harness through `cable.Harness`; the harness finds member cables through `InList` and never links them back (that would create a dependency cycle)
-- `Layout` stores lane offset vectors (`x,y,z`) keyed by `segmentName|cableName`; cables read their offset directly and shift both bundle-run endpoints
-- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, a `Radius` and an `Orientation` (roll about the segment axis)
-- The lateral arrangement axis is derived from the averaged global rotations of the start/end reference frames, then rotated by the segment `Orientation`; manual roll composes on top of the input rotation
-- A cable whose bundle-segment count exceeds `MaxCables` fails validation; only complete bundle-segment routes count toward the limit
-- Use `App::PropertyLinkGlobal` for segment start/end references; normal `App::PropertyLink` triggers FreeCAD scope warnings when the referenced objects live inside an `App::Part`
-- Segment `execute()` builds a pickable cylinder from the current point placements
-- Bundle segments are independent: no bundle-level bi-arcs or segment-to-segment links
-- All segments are placed in a standard `App::DocumentObjectGroup` linked by `SegmentGroup`; the harness claims that group in the tree, so its eye toggles visibility of all segments at once
-- Do not link a segment back to its harness; the harness links segments (`Segments`) and the view provider claims them as children
-- Implement `attach()` on custom view providers and set `self.Object`; `claimChildren()` can be called after a reload without `__init__`
-- `WireBundleSegment` also has hidden `Dependencies` (ancestor groups); update them when segment endpoints change so outer Part moves recompute the segment
-- Double-click the harness to edit its segments; deleting the harness removes its segments (deferred cleanup)
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and computed `Layout`.
+- Cables link `cable.Harness`; the harness finds member cables through `InList` and never links them back.
+- `Layout` stores lane offset vectors keyed by `segmentName|cableName`; cables shift both bundle-run endpoints by their offset.
+- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, `Radius`, `Orientation`, and `MaxCables` (0 = unlimited).
+- New segments default to visible, dark grey (`0.33, 0.33, 0.36`) at 65% transparency. The selected segment’s display radius is live-editable; Add Segment copies the active/default radius.
+- All segments are placed in a standard `App::DocumentObjectGroup` linked through `SegmentGroup`. The harness claims that group in the tree, so its eye toggles all segment visibility at once.
+- The harness view provider has an empty Coin display mode and `DefaultMode=0` so its eye/claimed children are showable.
+- Bundle segments occasionally receive a Part view provider with `Proxy=None` and no Coin display modes; `execute()` initializes it with `ViewObject.Proxy=1`, makes it visible, and signals the tree icon.
+- Use `App::PropertyLinkGlobal` for segment start/end references; normal `PropertyLink` triggers scope warnings inside `App::Part`.
+- `Segment.execute()` builds a pickable cylinder from the current point placements.
+- Bundle segments are independent: no bundle-level bi-arcs or segment-to-segment links.
+- Do not link a segment back to its harness; the harness links segments and the view provider claims the segment group.
+- `Dependencies` stores ancestor groups of the segment endpoints so outer Part moves recompute segments.
+- Double-click a harness to edit its segments; deleting the harness removes its segment group and segments via deferred cleanup.
+- The harness editor list and 3D selection sync in both directions. Opening the harness editor from a segment selects its row and preserves the segment selection.
 
 ### Plugin Structure
-- Workbench: `WirePluginWorkbench` (registered via `FreeCADGui.addWorkbench()`)
-- Toolbar commands: `WirePlugin_CreateWire` (cable) and `WirePlugin_DefineHarness` (harness segments/gap)
-- Context-menu commands: selected cables offer Edit Wire/Start Tip/End Tip; selected tips offer Edit Tip; selected bundle segments offer Edit Harness plus Move Start/End Point (selects the underlying node and opens the transform gizmo, falling back to Std_Placement when transform is unavailable); selected harnesses offer Edit Harness
-- Workbench task watchers populate the Tasks panel contextually: Create tools with no selection, Wire Tools for a cable, Tip Tools for a tip, Bundle Tools for a segment, and Harness Tools for a harness
-- Wire/Tip/Bundle task-watcher entries are custom hover buttons. Hovering no longer changes selection: Edit Wire tints the cable green, start/end tips recolor their helpers (or show a temporary green tube on the first/last path segment when no tip geometry exists), and bundle Move Start/End shows a temporary opaque green cap face plus its circular edge
-- `WireTaskPanel` provides the segment/point-reference editor and geometry controls
-- `WireCable` provides the persistent cable object and double-click editing
-- `WireHarness` provides the layout authority and independent straight segment objects
-- `WireBundleTaskPanel` defines the harness and its segments; it syncs the segment list with 3D selection (selecting a segment row selects its cylinder, and selecting a cylinder selects its row). Opening the harness tool with a segment selected selects that segment in the list and keeps it selected. Display radius is per selected segment and updates live; Add Segment copies the selected segment radius (or the current/default value). `PointReference.py` holds shared point-pick helpers
-- Installed in `freecad/WirePlugin/` inside the addon
+- Workbench: `WirePluginWorkbench`, registered with `FreeCADGui.addWorkbench()`.
+- Toolbar commands: `WirePlugin_CreateWire` and `WirePlugin_DefineHarness`.
+- Context-menu commands: cables offer Edit Wire/Start Tip/End Tip; tips offer Edit Tip; bundle segments offer Edit Harness plus Move Start/End Point (transform gizmo with `Std_Placement` fallback); harnesses offer Edit Harness.
+- Workbench task watchers populate the Tasks panel contextually: Create, Wire Tools, Tip Tools, Bundle Tools, Harness Tools.
+- Wire/Tip/Bundle task-watcher entries are custom hover buttons. Hovering does not change selection: cable hover turns the cable green, tip hover highlights helpers or shows a temporary green tube for an offset tip’s route end, and bundle Move Start/End shows an opaque green cap face plus circular edge.
+- `WireTaskPanel` is bundle-segment-only: one picker per route row and Reverse Segment; one valid segment auto-creates the cable.
+- `WireCable` provides the persistent object and double-click editing.
+- `WireHarness` is the layout authority and owns the straight segment objects.
+- `WireBundleTaskPanel` edits harness segments, visibility group, per-segment radius/MaxCables, gap and pattern; it syncs list/3D selection.
+- `WireColors.py` holds the primary/tracer palette and quadrant logic.
+- `FerruleData.py` loads the checked-in ferrule JSON.
+- `WireSelection.py` provides the selection reconciler, helper remapping and hover previews.
+- `WireTaskWatchers.py` defines the contextual Tasks-panel groups and hover buttons.
+- Installed in `freecad/WirePlugin/` inside the addon.
 
 ## Setup Requirements
 
 ### Prerequisites
-- FreeCAD GUI installed and running
-- Plugin directory linked to FreeCAD Mod path (e.g., via `.FreeCAD` directory)
+- FreeCAD GUI installed and running.
+- Plugin directory linked into the FreeCAD Mod path.
 
 ### Environment Quirks
-- Scripts check `App.GuiUp` before using GUI features; raise `SystemExit` if not available
-- FreeCAD objects are created in `App.ActiveDocument`; creates new document if none exists
+- FreeCAD runs as an AppImage with its own Python environment.
+- Use the FreeCAD MCP bridge for all FreeCAD Python execution; do not use the host Python.
+- Scripts check `App.GuiUp` before using GUI features and should exit cleanly when headless.
+- FreeCAD objects are created in `App.ActiveDocument`; create a document when none exists.
+- Workbench/task-watcher changes require restarting FreeCAD or reloading the workbench and task watcher modules.
 
 ## Operational Gotchas
 
 ### Headless Mode
-All scripts handle headless execution by checking `App.GuiUp`. They exit cleanly if GUI is not available.
+Scripts handle headless execution by checking `App.GuiUp` and exit cleanly when GUI is unavailable.
 
 ### Document Cleanup
-Scripts remove existing objects with prefix `PoC_`, `WireCreatorTests`, `Test_` before creating new objects to avoid conflicts.
+Tests remove objects with prefixes `PoC_`, `WireCreatorTests`, and `Test_` before creating new objects.
 
 ### Visualization
-- Bad arcs are shown in red (minimum radius violation) or orange (length violation)
-- Cable color comes from `CableColor`; new cables are created solid (`Transparency=0`) and user-set transparency is preserved across recomputes
-- Failed cables have 0% transparency for visibility
+- Bad arcs are red for minimum-radius violations and orange for length violations.
+- Cable color comes from `CableColor`/`CableColorTracer`; new cables are solid (`Transparency=0`) and user-set transparency is preserved across recomputes.
+- Failed cables use 0% transparency.
+- Hover previews use temporary green overlay geometry and remove it on leave; the preview object is hidden from the tree.
+- Bundle segments default to visible dark grey at 65% transparency.
 
 ### Coordinate System
-Segment start/end points can be defined in global coordinates or relative to a Placement/offset. The plugin uses FreeCAD's standard positioning gizmos for editing.
+Bundle segment endpoints are point references defined in global coordinates or relative to a Placement/offset. The plugin uses FreeCAD’s standard positioning gizmos.
+
+### Selection and Tree Hygiene
+- Helper clicks remap to the owning tip; do not leave helper rows selected.
+- `WireSelection` reconciles tip/helper appearance from the current document selection rather than incremental callbacks.
+- Clear tree selection/current/background only when the final selection is empty; avoid clearing tree state synchronously during row-to-row selection changes.
+- Tool open/close preserves unrelated selections and removes only the edited object.
 
 ### Selection Gate Cleanup
-- Pick mode installs a `Gui.Selection` gate and observer; always remove both after a pick and when the task panel is destroyed.
-- Selection-gate `allow()` can receive names or `Document`/`DocumentObject` instances; handle both forms.
+- Pick mode installs a `Gui.Selection` gate and observer; remove both after a pick and when the task panel is destroyed.
+- Selection-gate `allow()` can receive names or `Document`/`DocumentObject` instances; handle both.
+- Wire editing uses the bundle-segment-only gate; the harness editor uses the point-reference gate.
 
 ### Deletion Cleanup
-- Do not remove helper objects or the owning group synchronously inside a ViewProvider `onDelete`; FreeCAD's GUI command recorder can emit a truncated `removeObject(` command. Defer cleanup with `QtCore.QTimer.singleShot(0, ...)` using stored names.
+- Do not remove helper objects, segment groups, or the owning group synchronously inside a ViewProvider `onDelete`; FreeCAD’s command recorder can emit a truncated `removeObject(` command. Defer cleanup with `QtCore.QTimer.singleShot(0, ...)` using stored names.
+
+### View Provider Initialization
+- No-shape `App::FeaturePython` objects need an empty Coin display mode and `DefaultMode=0` for the tree eye to be active.
+- New `Part::FeaturePython` bundle segments can arrive with `ViewObject.Proxy=None` and zero display modes; initialize `Proxy=1`, make them visible and call `signalChangeIcon()`.
+- Do not rely on `ViewObject.SwitchNode` after proxy reloads; use `RootNode` and find the `SoSwitch`.
 
 ## Conventions
 
 ### Naming
-- **Segment**: Ordered list of pieces with start/end points
-- **Bi-arc**: G1 transition between two segments (computed in Python)
-- **Cable**: Result of sweeping circular profile along path
-- **Bundle**: Collection of cables routed together (future work)
+- **Route segment / bundle segment**: A straight segment with start/end point references; bundle segments are the required wire-path building block. Rename TODO is tracked in `plan.md`.
+- **Route**: Ordered list of bundle segments with per-segment Normal/Reversed directions.
+- **Bi-arc**: G1 transition between two route runs.
+- **Cable**: Swept circular result of a route.
+- **Harness/Bundle**: Collection of cables and the segment layout authority.
+- **PE**: Protective earth shortcut (primary Green, tracer Yellow).
 
 ### Parameters
-- `MIN_BEND_RADIUS`: default 12.0 mm (configurable per cable)
-- `CABLE_DIAMETER`: default 4.0 mm (configurable)
-- `USE_FRENET`: default True (follows curvature when sweeping)
+- `MIN_BEND_RADIUS`: default 12.0 mm, configurable per cable.
+- `CABLE_DIAMETER`: default 4.0 mm.
+- `USE_FRENET`: default True.
+- `MaxCables`: default 0 (unlimited); set 1 on endpoint segments.
+- Display radius: default 10.0 mm per bundle segment.
 
 ### Test Results
-- `check_wire()` returns list of failed arcs with:
-  - `label`: human-readable name
-  - `failed_tests`: list of test indices that failed (1=radius, 2=length)
-  - `biarc_total_len`, `chord_len`, `radius` (if available)
+- `check_wire()` returns failed arcs with:
+  - `label`
+  - `failed_tests` (1 = radius, 2 = length)
+  - `biarc_total_len`, `chord_len`, `radius` when available.
 
 ## References
-- `freecad/WirePlugin/WireCreator.py` - core bi-arc/path/sweep implementation
-- `freecad/WirePlugin/WireCable.py` - persistent cable object, dependency recompute, ViewProvider
-- `freecad/WirePlugin/WireTaskPanel.py` - segment editor and geometry controls
-- `freecad/WirePlugin/WirePluginCmd.py` - toolbar commands
-- `freecad/WirePlugin/WireBundle.py` - harness layout, segment objects and cylinder visualization
-- `freecad/WirePlugin/WireBundleTaskPanel.py` - harness segment/gap/pattern editor
-- `freecad/WirePlugin/WireTip.py` - per-end cable tip settings object
-- `freecad/WirePlugin/WireTipTaskPanel.py` - cable tip settings editor
-- `freecad/WirePlugin/FerruleData.py` - JSON ferrule library loader and helpers
-- `freecad/WirePlugin/WireSelection.py` - remaps core/ferrule helper selection to the owning tip
-- `freecad/WirePlugin/WireTaskWatchers.py` - contextual task-panel tool groups
-- `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` - ferrule library
-- `freecad/WirePlugin/WireColors.py` - cable color palette and primary/tracer quadrant layouts
-- `tools/csv_to_ferrules_json.py` - example CSV-to-JSON converter
-- `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers (wire segments use the bundle-segment-only gate)
-- `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
-- `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets
-- `plan.md` - project milestones and terminology
-- `diary.md` - development log (minimal)
-- `snippet_archive` - earlier isolated tests and classes kept for reference
-
+- `freecad/WirePlugin/WireCreator.py` — bi-arc/path/sweep and sector profile implementation.
+- `freecad/WirePlugin/WireCable.py` — persistent cable object, validation, colors and helpers.
+- `freecad/WirePlugin/WireTaskPanel.py` — bundle-segment wire route editor and geometry controls.
+- `freecad/WirePlugin/WirePluginCmd.py` — toolbar and context-menu commands.
+- `freecad/WirePlugin/WireBundle.py` — harness layout, segment group, segment objects and view providers.
+- `freecad/WirePlugin/WireBundleTaskPanel.py` — harness segment/group/radius/gap/pattern editor.
+- `freecad/WirePlugin/WireTip.py` — per-end cable tip settings object and view provider.
+- `freecad/WirePlugin/WireTipTaskPanel.py` — cable tip settings editor.
+- `freecad/WirePlugin/FerruleData.py` — ferrule JSON loader and helpers.
+- `freecad/WirePlugin/WireSelection.py` — selection reconciler, helper remapping and hover previews.
+- `freecad/WirePlugin/WireTaskWatchers.py` — contextual Tasks-panel tool groups and hover buttons.
+- `freecad/WirePlugin/WireColors.py` — primary/tracer cable color palette and quadrant layouts.
+- `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` — checked-in ferrule library.
+- `freecad/WirePlugin/PointReference.py` — shared point-reference pick helpers and selection gates.
+- `tools/csv_to_ferrules_json.py` — example ferrule CSV-to-JSON converter.
+- `plan.md` — milestones and pending naming TODO.
+- `diary.md` — development log.
+- `snippet_archive/` — earlier isolated tests and classes kept for reference.
