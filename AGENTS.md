@@ -54,8 +54,9 @@ The module provides a `WireCreator` class with these main operations:
 - `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes this cable's lane offsets
 - `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` and `Preview` are stored as properties
 - `WireSizeMM2` is 0 for custom wire sizes; standard sizes enforce the matching core area and derive the cable diameter from the ferrule sleeve (`d2 - 1 mm`)
-- `CableColor` is a cable-level `App::PropertyEnumeration` (independent of ferrule sleeve color); `apply_cable_color()` maps it to the cable's `ShapeColor`
-- Cable color choices are the single-color DIN 47100 entries (CSV numbers 1-10); the tool shows them as `number + English name`
+- `CableColor` is the primary cable-level `App::PropertyEnumeration`; `CableColorTracer` is the tracer enumeration (`None` for solid). `apply_cable_color()` maps them to the cable's `ShapeColor`/`ShapeAppearance`
+- The cable tool has separate primary and tracer dropdowns. Primary choices include PE, Black, Brown, Red, Orange, Yellow, Green, Blue, Violet, Grey, White, Pink and Turquoise; tracer choices are `None` plus the same colors
+- Selecting the PE shortcut sets primary Green and tracer Yellow. A non-`None` tracer uses three primary quadrants and one tracer quadrant. Multi-color cables are built from four longitudinal sector solids and colored per face; single-color cables keep the normal swept tube
 - Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
 - `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
 - Cable changes to `Points`, `Diameter` or `Harness` touch the harness so the lane layout is recalculated upstream
@@ -77,6 +78,7 @@ The module provides a `WireCreator` class with these main operations:
 - `LengthOffset`/`StrippedLength` are capped to just below the first/last route-piece length (`StartTipLength`/`EndTipLength` minus `TIP_OFFSET_MARGIN` = 0.01 mm); the tip panel applies changes live and restores the previous values on cancel
 - Stripped-wire tips set the outer cable back by `StrippedLength`; `StartCoreObject`/`EndCoreObject` display copper-colored core cylinders along the end pieces, clamped to the cable diameter
 - Ferrule tips use the selected JSON variant: the cable builds a hollow metallic tip, a colored plastic cone and sleeve, and the exposed core over `L2 + cone`. Sleeve color comes from the selected DIN/T/W code. Ferrule `L1` is validated against the tip-segment length and flagged in the tip panel when too long.
+- Enabling a ferrule tip selects the shortest conforming variant for the current cross-section/type; switching the cable cross-section resets ferrule tips to the shortest conforming variant for the new size. If no variant is marked conforming, the shortest available variant is used.
 - Clicking a core/ferrule helper selects its owning `WireTip` via the global `WireSelection` observer, so the tip can be opened from the tree. The clicked helper is temporarily recolored green for highlighting but is not selected, so hidden helper rows cannot pop into the tree; appearance is restored when the selection changes.
 - Toggling a tip's eye icon syncs visibility of its core/ferrule helper geometry; toggle it in the ViewProvider `onChanged`/`attach` handler.
 - Tip view providers add an empty Coin display mode and set `DefaultMode=0` so FreeCAD treats the no-shape tip as showable; otherwise the tree eye icon stays grey even when `Visibility` is true.
@@ -126,7 +128,7 @@ Scripts remove existing objects with prefix `PoC_`, `WireCreatorTests`, `Test_` 
 
 ### Visualization
 - Bad arcs are shown in red (minimum radius violation) or orange (length violation)
-- Cable shown in blue with 20% transparency
+- Cable color comes from `CableColor`; new cables are created solid (`Transparency=0`) and user-set transparency is preserved across recomputes
 - Failed cables have 0% transparency for visibility
 
 ### Coordinate System
@@ -170,6 +172,7 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/FerruleData.py` - JSON ferrule library loader and helpers
 - `freecad/WirePlugin/WireSelection.py` - remaps core/ferrule helper selection to the owning tip
 - `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` - ferrule library
+- `freecad/WirePlugin/WireColors.py` - cable color palette and primary/tracer quadrant layouts
 - `tools/csv_to_ferrules_json.py` - example CSV-to-JSON converter
 - `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers
 - `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration

@@ -8,7 +8,14 @@ import FreeCADGui as Gui
 import Part
 
 from . import FerruleData
-from .WireColors import color_rgb, names as cable_color_names
+from .WireColors import (
+    TRACER_NONE,
+    color_rgb,
+    is_multicolor,
+    names as cable_color_names,
+    parse_legacy,
+    quadrants as cable_color_quadrants,
+)
 from .WireBundle import (
     ancestor_groups,
     is_bundle_segment,
@@ -108,27 +115,45 @@ class WireCableProxy:
                 "Minimum allowed bending radius",
             )
             obj.MinBendRadius = 12.0
+        color_names = cable_color_names()
         if "CableColor" not in properties:
             obj.addProperty(
                 "App::PropertyEnumeration",
                 "CableColor",
                 "Wire",
-                "Wire insulation color",
+                "Primary wire insulation color",
             )
-            obj.CableColor = list(cable_color_names())
+            obj.CableColor = list(color_names)
             obj.CableColor = "Blue"
-        else:
-            current = getattr(obj, "CableColor", "Blue")
-            try:
-                obj.CableColor = list(cable_color_names())
-            except Exception:
-                pass
-            if current not in cable_color_names():
-                current = "Blue"
-            try:
-                obj.CableColor = current
-            except Exception:
-                pass
+        if "CableColorTracer" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "CableColorTracer",
+                "Wire",
+                "Tracer wire insulation color (None for solid)",
+            )
+            obj.CableColorTracer = [TRACER_NONE] + list(color_names)
+            obj.CableColorTracer = TRACER_NONE
+        current = getattr(obj, "CableColor", "Blue")
+        tracer = getattr(obj, "CableColorTracer", TRACER_NONE)
+        if current not in color_names:
+            current, legacy_tracer = parse_legacy(current)
+            if tracer in (TRACER_NONE, None) and legacy_tracer != TRACER_NONE:
+                tracer = legacy_tracer
+        if current not in color_names:
+            current = "Blue"
+        if tracer not in (TRACER_NONE,) + color_names:
+            tracer = TRACER_NONE
+        try:
+            obj.CableColor = list(color_names)
+            obj.CableColor = current
+        except Exception:
+            pass
+        try:
+            obj.CableColorTracer = [TRACER_NONE] + list(color_names)
+            obj.CableColorTracer = tracer
+        except Exception:
+            pass
         if "BuildCable" not in properties:
             obj.addProperty(
                 "App::PropertyBool",
@@ -326,6 +351,15 @@ class WireCableProxy:
             cable = geometry_creator.make_cable(
                 geometry_wire, diameter=obj.Diameter.Value
             )
+            if is_multicolor(
+                getattr(obj, "CableColor", "Blue"),
+                getattr(obj, "CableColorTracer", TRACER_NONE),
+            ):
+                sectors = geometry_creator.make_cable_sectors(
+                    geometry_wire, diameter=obj.Diameter.Value
+                )
+                if sectors is not None:
+                    cable = sectors
             obj.Shape = cable if cable is not None else Part.Shape()
             start_core_shape = self._make_core(segments[0], start_settings, True)
             end_core_shape = self._make_core(segments[-1], end_settings, False)
@@ -397,6 +431,7 @@ class WireCableProxy:
         if bad_results:
             status += f" | WARNING: {len(bad_results)} bad bi-arc edge(s)"
         obj.Status = status
+        apply_cable_color(obj)
 
     @staticmethod
     def _core_diameter(cable, maximum):
@@ -737,6 +772,11 @@ class WireCableProxy:
         obj.EndTipLength = 0.0
         obj.MinimumRadius = 0.0
         obj.Status = f"Error: {message}"
+        try:
+            obj.ViewObject.ShapeAppearance = []
+            apply_cable_color(obj)
+        except Exception:
+            pass
 
     def dumps(self):
         return self.Type
@@ -754,10 +794,37 @@ class WireCableProxy:
     def onChanged(self, obj, prop):
         if prop == "Points":
             update_cable_dependencies(obj)
-        if prop == "CableColor":
-            apply_cable_color(obj)
+        if prop in ("CableColor", "CableColorTracer"):
+            obj.touch()
+        if prop == "WireSizeMM2":
+            self._reset_ferrule_variants(obj)
         if prop in ("Points", "Diameter", "Harness"):
             self._touch_harness(obj)
+
+    @staticmethod
+    def _reset_ferrule_variants(cable):
+        entry = FerruleData.cross_section_for_size(
+            getattr(cable, "WireSizeMM2", 0.0)
+        )
+        if entry is None:
+            return
+        available = FerruleData.ferrule_types(entry)
+        for name in ("StartTip", "EndTip"):
+            tip = getattr(cable, name, None)
+            if not _is_valid(tip, cable.Document):
+                continue
+            if getattr(tip, "TipType", "Length offset") != "Ferrule":
+                continue
+            type_entry = FerruleData.ferrule_type(
+                entry, getattr(tip, "FerruleType", "tube")
+            )
+            if type_entry is None:
+                type_entry = available[0] if available else None
+            if type_entry is None:
+                continue
+            if getattr(tip, "FerruleType", None) != type_entry["type"]:
+                tip.FerruleType = type_entry["type"]
+            tip.FerruleVariant = FerruleData.default_variant_index(type_entry)
 
     @staticmethod
     def _touch_harness(cable):
@@ -1155,14 +1222,50 @@ def hide_support_objects(cable):
             container.Group = children
 
 
-def apply_cable_color(cable):
-    """Apply the cable's insulation color to the 3D view."""
-    rgb = color_rgb(getattr(cable, "CableColor", "Blue"))
+def _color_material(name):
+    rgb = color_rgb(name)
     if rgb is None:
+        return None
+    material = App.Material()
+    material.DiffuseColor = (rgb[0], rgb[1], rgb[2], 1.0)
+    material.Transparency = 0
+    return material
+
+
+def apply_cable_color(cable):
+    """Apply the cable's insulation colors to the 3D view."""
+    primary_name = getattr(cable, "CableColor", "Blue")
+    tracer_name = getattr(cable, "CableColorTracer", TRACER_NONE)
+    colors = cable_color_quadrants(primary_name, tracer_name)
+    primary = color_rgb(primary_name)
+    if primary is None:
         return
+    view = getattr(cable, "ViewObject", None)
+    if view is None:
+        return
+    transparency = getattr(view, "Transparency", 0)
+    shape = getattr(cable, "Shape", None)
+    if colors and len(set(colors)) > 1 and shape is not None:
+        solids = list(getattr(shape, "Solids", []) or [])
+        if len(solids) == len(colors):
+            materials = []
+            for color, solid in zip(colors, solids):
+                material = _color_material(color)
+                if material is None:
+                    break
+                materials.extend([material] * len(solid.Faces))
+            if len(materials) == len(shape.Faces):
+                try:
+                    view.ShapeColor = primary
+                    view.ShapeAppearance = materials
+                    view.Transparency = transparency
+                    return
+                except Exception:
+                    pass
     try:
-        cable.ViewObject.ShapeColor = rgb
-        cable.ViewObject.Transparency = 20
+        view.ShapeAppearance = []
+        view.ShapeColor = primary
+        view.Transparency = transparency
     except Exception:
         pass
 
@@ -1185,6 +1288,10 @@ def create_wire_cable(
     if App.GuiUp:
         ViewProviderWireCable(cable.ViewObject)
         apply_cable_color(cable)
+        try:
+            cable.ViewObject.Transparency = 0
+        except Exception:
+            pass
 
     cable.Points = list(points)
     update_cable_dependencies(cable)

@@ -328,3 +328,36 @@ class WireCreator:
             return wire.makePipeShell([profile], True, use_frenet, 0)
         except Exception:
             return None
+
+    def make_cable_sectors(self, wire=None, diameter=4.0, use_frenet=True):
+        """Build four longitudinal quadrant solids for multi-color cables."""
+        if wire is None:
+            wire = self.wire
+        if wire is None:
+            return None
+        try:
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            circle = Part.Circle(start, tangent, diameter / 2.0)
+            shapes = []
+            for index in range(4):
+                first = math.pi * index / 2.0
+                last = math.pi * (index + 1) / 2.0
+                arc = Part.Arc(circle, first, last).toShape()
+                arc_start = arc.valueAt(arc.FirstParameter)
+                arc_end = arc.valueAt(arc.LastParameter)
+                profile = Part.Wire(
+                    [
+                        Part.makeLine(start, arc_start),
+                        arc,
+                        Part.makeLine(arc_end, start),
+                    ]
+                )
+                shape = wire.makePipeShell([profile], True, use_frenet, 0)
+                if not shape.Solids:
+                    return None
+                shapes.append(shape)
+            return Part.makeCompound(shapes)
+        except Exception:
+            return None

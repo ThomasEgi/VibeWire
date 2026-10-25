@@ -181,7 +181,7 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 
 ### Source Data
 - Input CSV: `wire_end_sleeves_DIN_46228_T4_complete.csv` in the project directory.
-- Input CSV: `cable_colors_DIN47100.csv` for the DIN 47100 insulation color sequence; only single-color entries (numbers 1-10) are currently exposed as cable colors.
+- Cable colors use separate primary and tracer selections rather than a long combined-code list. The palette contains the international individual colors plus previously used Pink and Turquoise; PE is a primary shortcut that sets Green/Yellow.
 - Columns: `cross_section_mm2`, `AWG`, `color_code_DIN`, `color_code_T`, `color_code_W`, `total_legnth_l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm`, `standard`, `Not according to norm`.
 - Normalize `total_legnth_l1_mm` to `total_length_l1_mm` in the JSON.
 - `L1` is the total ferrule length including the protective plastic sleeve over the wire insulation.
@@ -199,10 +199,12 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - [x] **Custom wire size**: When `Custom wire size` is selected, show/editable cable diameter and core diameter fields; for standard sizes show the derived diameter/core as read-only/informational.
 - [x] **Ferrule tip type**: Add `Ferrule` to the tip-type dropdown in the cable-tip editor.
 - [x] **Ferrule type/variant selector**: After selecting a cross-section/AWG, choose the ferrule type (for example `tube`) per tip, then pick one of its variants when several exist. Show the standard carried by the selected ferrule entry. Custom wire sizes do not select a predefined ferrule.
+- [x] **Ferrule defaults**: Enabling a ferrule tip or changing the cable cross-section selects the shortest conforming variant for that size/type; fall back to the shortest available variant when none are marked conforming.
 - [x] **Ferrule geometry**: Model the conductive tip as a tube of length `L2`, inner diameter `d1`, wall `s1`; expand through a 45 degree plastic cone until the sleeve diameter is reached; model the colored protective sleeve with inner `d2`, wall `s2`; total length `L1`.
 - [x] **Sleeve color**: Select the sleeve color through the DIN/T/W color-code table for the selected wire size; color the plastic sleeve and its cone. The metal tip stays metallic.
-- [x] **Wire insulation color**: Add a separate cable-level wire-insulation color selection in the cable tool; keep it independent from the ferrule sleeve color. Options come from the single-color DIN 47100 entries (CSV numbers 1-10).
-- [ ] **Yellow-green protective earth**: Render PE insulation as alternating yellow/green bands. Keep the color system extensible for other special wire codings.
+- [x] **Wire insulation color**: Add separate cable-level primary and tracer color selections in the cable tool; keep them independent from the ferrule sleeve color. The tracer dropdown includes `None` for solid cables.
+- [x] **Multi-color insulation**: Divide the cable cross-section into four quadrants. Two-color cables use three quadrants for the primary color and one for the tracer color. The primary color therefore occupies at least half the cable.
+- [x] **Yellow-green protective earth**: Keep a PE shortcut in the primary menu; selecting it sets primary Green and tracer Yellow (three green quadrants and one yellow).
 - [x] **Stripped length**: The cable's stripped length is the conductive tip length `L2` plus the 45 degree cone length; trim the outer insulation accordingly and expose the core.
 - [x] **Core compatibility**: For a predefined cross-section, enforce the corresponding core size. Ferrules are matched to that cross-section and color code. Validate that the core fits inside `d1`.
 - [x] **Persistence/recompute (data/menus)**: Store wire size, ferrule type/variant, sleeve color system and cable insulation color on the cable/tips; cable stripping/core geometry recomputes on change.
@@ -218,8 +220,8 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - The tip panel ferrule page shows the selected size, type/variant, sleeve color preview, tip length (`L1`) and stripped length. The tip length is flagged red with an error when it exceeds the available tip-segment length.
 - Ferrule data is loaded by `FerruleData.py`; the cable tool gets the wire-size menu and the tip panel gets ferrule type/variant/sleeve-code menus, a color preview and tip/stripped length. Core size is read from the cable, not edited in the tip panel.
 - The UI flow is cross-section/AWG → ferrule type → variant, with the type and standard shown in the selector.
-- Yellow-green PE insulation is rendered as alternating yellow/green bands. The color system should remain extensible for other special wire codings.
-- Keep the ferrule sleeve/cone color separate from the cable-level wire insulation color in both data and UI. The cable tool exposes DIN 47100 single colors only; double and triple colors from the CSV remain data for future multi-wire coding work.
+- Multi-color insulation is rendered from four longitudinal sector solids; the primary color uses three quadrants and the tracer uses one. The PE shortcut is the Green/Yellow two-color combination.
+- Keep the ferrule sleeve/cone color separate from the cable-level wire insulation color in both data and UI. Store primary and tracer separately on the cable; the tool exposes short primary/tracer dropdowns instead of a long combination list.
 
 ### Acceptance Criteria
 - The JSON library loads and the wire-size dropdown lists all available sizes.
@@ -229,16 +231,17 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - Ferrule geometry shows the metallic conductive tip, 45 degree plastic cone and colored sleeve with dimensions from the data; cone and sleeve share the selected color.
 - The cable outer insulation is stripped over `L2 + cone_length`; the exposed core fits `d1` or shows a warning.
 - Ferrule sleeve/cone color follows the selected DIN/T/W code; wire insulation color is cable-level and independently selectable.
-- Yellow-green PE insulation is shown as alternating bands and is visually distinguishable.
+- Yellow-green PE insulation is shown as three green quadrants and one yellow quadrant and is visually distinguishable.
 - Changing wire size, ferrule variant or color updates both ends/geometry as applicable.
 
-> **Implementation note:** Wire-size and ferrule menus are populated from the JSON. Ferrule tips now generate the metallic tip, colored plastic cone/sleeve and exposed-core geometry. Cable-level insulation color selection is implemented; yellow-green PE band rendering remains.
+> **Implementation note:** Wire-size and ferrule menus are populated from the JSON. Ferrule tips now generate the metallic tip, colored plastic cone/sleeve and exposed-core geometry. Cable-level primary/tracer selection is implemented with a PE shortcut.
 
 ### Resolved Decisions
 - Cone length is included in the `L2` dimension per review; sleeve length is `L1 - L2 - cone_length`.
 - The 45 degree cone is plastic, part of the sleeve, and uses the selected sleeve color.
 - Use reasonable HTML-style colors for the code palette; exact RGB values are not critical as long as the colors are clearly distinguishable.
-- Yellow-green protective earth uses alternating color bands; the system remains extensible for other special wire codings.
+- Yellow-green protective earth uses three green quadrants and one yellow quadrant; the system remains extensible for other special wire codings.
+- Two-color cables use three primary quadrants and one tracer quadrant. The PE shortcut sets primary Green and tracer Yellow.
 - Selecting a predefined cross-section enforces the matching core size.
 - Ferrule variants match the selected cross-section and color code.
 - Wire insulation colors are cable-level and independent from the ferrule sleeve/cone color.

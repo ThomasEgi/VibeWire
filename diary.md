@@ -45,3 +45,8 @@
 - 2026-10-25: Added cable-level insulation color dropdown using the single-color DIN 47100 entries (numbers 1-10), persisted on WireCable and applied to cable ShapeColor; ferrule sleeve color remains independent.
 - 2026-10-25: Cable-color menu now uses DIN 47100 numbers with English color names.
 - 2026-10-25: Bundle-segment picks now clear both segment fields and rebuild them from the clicked direction, avoiding stale same-segment states; Swap Start/End works.
+- 2026-10-25: Added DIN 47100 two/three-color cable options and PE; multi-color cables use four cross-section quadrants with the primary color on at least two quadrants.
+- 2026-10-25: Two-color cables now use 3 primary + 1 secondary quadrant; color menu groups PE/single/two/three with separators, and new cables are solid while transparency is preserved on regeneration.
+- 2026-10-25: Replaced DIN 47100 cable colors with the international single-color and two-color primary/tracer code; removed three-color options and kept PE.
+- 2026-10-25: Replaced the long combined color list with primary/tracer dropdowns; restored Pink/Turquoise, kept PE as a Green/Yellow shortcut, and dropped the international combination CSV dependency.
+- 2026-10-25: Ferrule tips now default to the shortest conforming variant when enabled or when the cable cross-section changes.

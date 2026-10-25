@@ -1,39 +1,30 @@
-"""DIN 47100 single-color cable insulation options.
+"""Cable insulation colors and primary/tracer quadrant layouts."""
 
-Source: cable_colors_DIN47100.csv (only single-color rows 1-10).
-"""
+TRACER_NONE = "None"
 
-# number, DIN 47100 German name, canonical name, display color
-CABLE_COLORS = (
-    (1, "weiß", "White", "#f5f5f5"),
-    (2, "braun", "Brown", "#7b4a1e"),
-    (3, "grün", "Green", "#2e7d32"),
-    (4, "gelb", "Yellow", "#f2c200"),
-    (5, "grau", "Grey", "#6e6e6e"),
-    (6, "rosa", "Pink", "#d81b60"),
-    (7, "blau", "Blue", "#1e5aa8"),
-    (8, "rot", "Red", "#c62828"),
-    (9, "schwarz", "Black", "#1a1a1a"),
-    (10, "violett", "Violet", "#6a1b9a"),
+SINGLE_COLORS = (
+    ("Black", "#1a1a1a"),
+    ("Brown", "#7b4a1e"),
+    ("Red", "#c62828"),
+    ("Orange", "#ef6c00"),
+    ("Yellow", "#f2c200"),
+    ("Green", "#2e7d32"),
+    ("Blue", "#1e5aa8"),
+    ("Violet", "#6a1b9a"),
+    ("Grey", "#6e6e6e"),
+    ("White", "#f5f5f5"),
+    ("Pink", "#d81b60"),
+    ("Turquoise", "#009688"),
 )
+_HEX = dict(SINGLE_COLORS)
 
 
 def names():
-    return tuple(name for _number, _german, name, _color in CABLE_COLORS)
-
-
-def label(name):
-    for number, _german, color_name, _color in CABLE_COLORS:
-        if color_name == name:
-            return f"{number} {color_name}"
-    return name
+    return tuple(name for name, _color in SINGLE_COLORS)
 
 
 def color_hex(name):
-    for _number, _german, color_name, color in CABLE_COLORS:
-        if color_name == name:
-            return color
-    return None
+    return _HEX.get(name)
 
 
 def color_rgb(name):
@@ -44,3 +35,29 @@ def color_rgb(name):
         return tuple(int(value[index:index + 2], 16) / 255.0 for index in (0, 2, 4))
     except ValueError:
         return None
+
+
+def quadrants(primary, tracer):
+    if not tracer or tracer == TRACER_NONE or tracer == primary:
+        return (primary,) * 4
+    return (primary, primary, primary, tracer)
+
+
+def is_multicolor(primary, tracer):
+    return len(set(quadrants(primary, tracer))) > 1
+
+
+def parse_legacy(name):
+    """Split an old combined color name into primary and tracer."""
+    if name == "PE":
+        return "Green", "Yellow"
+    if name in _HEX:
+        return name, TRACER_NONE
+    parts = str(name or "").split("-")
+    if (
+        len(parts) >= 2
+        and parts[0] in _HEX
+        and parts[1] in _HEX
+    ):
+        return parts[0], parts[1]
+    return "Blue", TRACER_NONE

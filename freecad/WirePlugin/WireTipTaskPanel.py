@@ -256,7 +256,7 @@ class WireTipTaskPanel:
             )
             index = int(getattr(self.tip, "FerruleVariant", 0))
             if index < 0 or index >= self.ferrule_variant_combo.count():
-                index = 0
+                index = FerruleData.default_variant_index(type_entry)
             self.ferrule_variant_combo.setCurrentIndex(index)
             self._update_ferrule_details()
         finally:
@@ -327,9 +327,16 @@ class WireTipTaskPanel:
         if type_entry is None:
             return
         self.tip.FerruleType = type_entry["type"]
-        self.tip.FerruleVariant = 0
+        self.tip.FerruleVariant = FerruleData.default_variant_index(type_entry)
         self._populate_ferrule_variants()
         self._schedule()
+
+    def _set_default_ferrule_variant(self):
+        type_entry = self._selected_ferrule_type()
+        if type_entry is None:
+            return
+        self.tip.FerruleVariant = FerruleData.default_variant_index(type_entry)
+        self._populate_ferrule_variants()
 
     def _on_ferrule_variant_changed(self, index):
         if self._updating:
@@ -356,6 +363,8 @@ class WireTipTaskPanel:
         self.stack.setCurrentIndex(
             {"Length offset": 0, "Stripped wire": 1, "Ferrule": 2}.get(text, 0)
         )
+        if text == "Ferrule":
+            self._set_default_ferrule_variant()
         self._schedule()
 
     def _apply_live(self):

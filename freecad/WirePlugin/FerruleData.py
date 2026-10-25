@@ -69,6 +69,22 @@ def variant(type_entry, index):
         return items[0]
 
 
+def default_variant_index(type_entry):
+    """Return the shortest conforming variant, falling back to shortest."""
+    items = variants(type_entry)
+    if not items:
+        return 0
+    conforming = [
+        index for index, item in enumerate(items)
+        if item.get("conforming", True)
+    ]
+    candidates = conforming or list(range(len(items)))
+    return min(
+        candidates,
+        key=lambda index: (items[index].get("l1_mm", float("inf")), index),
+    )
+
+
 def variant_label(variant_data):
     label = (
         f"L1 {variant_data['l1_mm']:g} / "

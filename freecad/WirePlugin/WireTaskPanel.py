@@ -8,7 +8,7 @@ import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
 from . import FerruleData
-from .WireColors import CABLE_COLORS
+from .WireColors import TRACER_NONE, color_hex, names as cable_color_names
 from .WireBundle import (
     add_cable_to_harness,
     find_harness_for_segments,
@@ -39,6 +39,7 @@ class WireTaskPanel:
         self._picking = None
         self._gate_active = False
         self._syncing_selection = False
+        self._syncing_colors = False
         self._selection_observer = None
         self.cable = cable
         self._build_cable = (
@@ -106,15 +107,30 @@ class WireTaskPanel:
         geometry_layout.addRow("Wire size:", self.wire_size_combo)
         self.cable_color_combo = QtGui.QComboBox()
         self.cable_color_combo.setIconSize(QtCore.QSize(14, 14))
-        for number, german, name, color in CABLE_COLORS:
-            pixmap = QtGui.QPixmap(14, 14)
-            pixmap.fill(QtGui.QColor(color))
+        self.cable_color_combo.addItem(
+            self._cable_color_icon(("Green", "Green", "Green", "Yellow")),
+            "PE (Green-Yellow)",
+            "__PE__",
+        )
+        self.cable_color_combo.insertSeparator(self.cable_color_combo.count())
+        for name in cable_color_names():
             self.cable_color_combo.addItem(
-                QtGui.QIcon(pixmap), f"{number} {name}", name
+                self._cable_color_icon((name,)), name, name
             )
         blue_index = self.cable_color_combo.findData("Blue")
-        self.cable_color_combo.setCurrentIndex(blue_index if blue_index >= 0 else 0)
-        geometry_layout.addRow("Cable color:", self.cable_color_combo)
+        self.cable_color_combo.setCurrentIndex(
+            blue_index if blue_index >= 0 else 0
+        )
+        geometry_layout.addRow("Primary color:", self.cable_color_combo)
+        self.cable_tracer_combo = QtGui.QComboBox()
+        self.cable_tracer_combo.setIconSize(QtCore.QSize(14, 14))
+        self.cable_tracer_combo.addItem("None", TRACER_NONE)
+        self.cable_tracer_combo.insertSeparator(self.cable_tracer_combo.count())
+        for name in cable_color_names():
+            self.cable_tracer_combo.addItem(
+                self._cable_color_icon((name,)), name, name
+            )
+        geometry_layout.addRow("Tracer color:", self.cable_tracer_combo)
         self.diameter_spin = QtGui.QDoubleSpinBox()
         self.diameter_spin.setRange(0.1, 1000.0)
         self.diameter_spin.setDecimals(2)
@@ -173,7 +189,12 @@ class WireTaskPanel:
         self.btn_create_path.clicked.connect(self.create_path)
         self.btn_create_cable.clicked.connect(self.create_cable)
         self.wire_size_combo.currentIndexChanged.connect(self._on_wire_size_changed)
-        self.cable_color_combo.currentIndexChanged.connect(self._on_cable_color_changed)
+        self.cable_color_combo.currentIndexChanged.connect(
+            self._on_primary_color_changed
+        )
+        self.cable_tracer_combo.currentIndexChanged.connect(
+            self._on_tracer_color_changed
+        )
         self.diameter_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
         self.core_diameter_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
         self.min_bend_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
@@ -219,11 +240,9 @@ class WireTaskPanel:
                 }
             )
 
-        color = getattr(self.cable, "CableColor", "Blue")
-        color_index = self.cable_color_combo.findData(color)
-        self.cable_color_combo.setCurrentIndex(
-            color_index if color_index >= 0 else self.cable_color_combo.findData("Blue")
-        )
+        primary = getattr(self.cable, "CableColor", "Blue")
+        tracer = getattr(self.cable, "CableColorTracer", TRACER_NONE)
+        self._set_color_combos(primary, tracer)
         self.diameter_spin.setValue(self.cable.Diameter.Value)
         self.core_diameter_spin.setValue(self.cable.CoreDiameter.Value)
         self.min_bend_spin.setValue(self.cable.MinBendRadius.Value)
@@ -549,13 +568,79 @@ class WireTaskPanel:
             self.core_diameter_label.setVisible(False)
         self._schedule_live_update()
 
-    def _on_cable_color_changed(self, *args):
-        if self.cable is not None and self.cable.isValid():
-            self.cable.CableColor = self._selected_cable_color()
+    @staticmethod
+    def _cable_color_icon(colors):
+        pixmap = QtGui.QPixmap(14, 14)
+        if len(colors) == 1 or len(set(colors)) == 1:
+            pixmap.fill(QtGui.QColor(color_hex(colors[0])))
+        else:
+            pixmap.fill(QtGui.QColor(color_hex(colors[0])))
+            painter = QtGui.QPainter(pixmap)
+            for color_name, rect in zip(
+                colors,
+                (
+                    QtCore.QRect(0, 0, 7, 7),
+                    QtCore.QRect(7, 0, 7, 7),
+                    QtCore.QRect(0, 7, 7, 7),
+                    QtCore.QRect(7, 7, 7, 7),
+                ),
+            ):
+                painter.fillRect(rect, QtGui.QColor(color_hex(color_name)))
+            painter.end()
+        return QtGui.QIcon(pixmap)
 
-    def _selected_cable_color(self):
+    def _set_color_combos(self, primary, tracer):
+        self._syncing_colors = True
+        try:
+            index = self.cable_color_combo.findData(primary)
+            if index < 0:
+                index = self.cable_color_combo.findData("Blue")
+            self.cable_color_combo.setCurrentIndex(index if index >= 0 else 0)
+            index = self.cable_tracer_combo.findData(tracer)
+            if index < 0:
+                index = 0
+            self.cable_tracer_combo.setCurrentIndex(index)
+        finally:
+            self._syncing_colors = False
+
+    def _selected_primary_color(self):
         value = self.cable_color_combo.currentData()
+        if value == "__PE__":
+            return "Green"
         return value if value else "Blue"
+
+    def _selected_tracer_color(self):
+        value = self.cable_tracer_combo.currentData()
+        return value if value else TRACER_NONE
+
+    def _apply_cable_colors(self, primary, tracer):
+        if self.cable is not None and self.cable.isValid():
+            self.cable.CableColor = primary
+            self.cable.CableColorTracer = tracer
+            try:
+                self.cable.Document.recompute()
+            except Exception:
+                pass
+
+    def _on_primary_color_changed(self, *args):
+        if self._syncing_colors:
+            return
+        value = self.cable_color_combo.currentData()
+        if not value:
+            return
+        if value == "__PE__":
+            self._set_color_combos("Green", "Yellow")
+            self._apply_cable_colors("Green", "Yellow")
+            return
+        self._apply_cable_colors(value, self._selected_tracer_color())
+
+    def _on_tracer_color_changed(self, *args):
+        if self._syncing_colors:
+            return
+        value = self.cable_tracer_combo.currentData()
+        if not value:
+            return
+        self._apply_cable_colors(self._selected_primary_color(), value)
 
     def _schedule_live_update(self):
         if self.cable is not None:
@@ -616,7 +701,8 @@ class WireTaskPanel:
         cable.Diameter = diameter
         cable.MinBendRadius = min_bend_radius
         cable.WireSizeMM2 = wire_size_mm2
-        cable.CableColor = self._selected_cable_color()
+        cable.CableColor = self._selected_primary_color()
+        cable.CableColorTracer = self._selected_tracer_color()
         if wire_size_mm2 > 0.0:
             cable.CoreSizeMode = "Area"
             cable.CoreArea = wire_size_mm2
