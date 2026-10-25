@@ -28,3 +28,20 @@
 - 2026-10-25: Capped tip offsets at segment length minus 0.01 mm; offset == segment length previously removed the end piece and its adjacent bi-arcs.
 - 2026-10-25: Added tip types with stripped-wire cores: length offset vs stripped wire, stripped length, core diameter/area with mm/mm² unit selection and common 1.0/1.5/2.5 mm² presets, clamped by cable diameter, plus live panel updates.
 - 2026-10-25: Moved core size to the wire: CoreSizeMode/CoreArea/CoreDiameter live on WireCable and are shared by both tips; the tip panel edits the cable via InList without adding a dependency cycle.
+- 2026-10-25: Added the JSON ferrule library, FerruleData loader, cable wire-size dropdown and ferrule type/variant/sleeve-code menus. Standard sizes derive cable diameter/core; ferrule strip length currently uses L2 + cone.
+- 2026-10-25: Added ferrule mesh generation: hollow metallic tip, 45-degree colored plastic cone/sleeve and exposed core from the selected JSON variant/color code; ferrule helper objects are created in the wire group.
+- 2026-10-25: Fixed existing tips not accepting the new Ferrule TipType: WireTip now extends the TipType enumeration on migration while preserving the current value.
+- 2026-10-25: Simplified the tip panel: stripped-wire tips only expose stripping length and read core/diameter from the cable; ferrule output keeps tip length (L1, red error if it exceeds the tip segment) and stripped length.
+- 2026-10-25: Added custom core-diameter input to the wire tool and debounced live updates for segment/reference/diameter/core/bend changes on existing cables. Added an M2D milestone for tool-session transactions/undo.
+- 2026-10-25: Wire tool now auto-creates/updates once more than one segment exists; incomplete routes clear the cable geometry and show an orange "Segment definition incomplete" status without modal dialogs.
+- 2026-10-25: Incomplete wire routes now keep their valid prefix visible as the red path using Preview=True; solid/core/ferrule geometry is hidden until the route is complete, with an orange status.
+- 2026-10-25: Added a Swap Start/End button to the wire tool; swapping updates the selected segment, direction semantics and live cable routing.
+- 2026-10-25: Added two-way selection sync in the wire tool: bundle-segment selection in 3D selects the matching segment row, and selecting a row highlights its bundle/point references.
+- 2026-10-25: Added global selection remapping: clicking core/ferrule helper geometry selects the owning WireTip so the tip editor can be opened from the tree.
+- 2026-10-25: Tip visibility now toggles its core/ferrule helper geometry; cable/tip visibility remains controlled from the clean tree.
+- 2026-10-25: Fixed tip eye icons by adding an empty Coin display mode and setting DefaultMode; tree visibility now matches tip/core/ferrule visibility. Guarded Coin access during attach after SWIG load errors.
+- 2026-10-25: Clicking core/ferrule helpers now highlights the clicked geometry by temporary appearance change while the tree selects the owning tip; hidden helpers no longer pop into the tree.
+- 2026-10-25: Locate tip mode switch via RootNode instead of SwitchNode; avoids the SWIG error after proxy reloads and restores tree eye icons.
+- 2026-10-25: Added cable-level insulation color dropdown using the single-color DIN 47100 entries (numbers 1-10), persisted on WireCable and applied to cable ShapeColor; ferrule sleeve color remains independent.
+- 2026-10-25: Cable-color menu now uses DIN 47100 numbers with English color names.
+- 2026-10-25: Bundle-segment picks now clear both segment fields and rebuild them from the clicked direction, avoiding stale same-segment states; Swap Start/End works.

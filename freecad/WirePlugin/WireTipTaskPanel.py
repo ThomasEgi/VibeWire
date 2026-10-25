@@ -1,27 +1,14 @@
 """Task panel for editing cable end tip settings."""
 
-import math
-import re
-
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
+from . import FerruleData
 from .WireTip import TIP_OFFSET_MARGIN, WireTipProxy
-
-NUMBER_PATTERN = re.compile(
-    r"^\s*([0-9]+(?:[.,][0-9]*)?)\s*(mm\s*\^?2|mm2|mm²|mm)?\s*$",
-    re.IGNORECASE,
-)
 
 
 class WireTipTaskPanel:
     """Edit the cable end treatment and its dimensions."""
-
-    PRESETS = (
-        ("1.0 mm²", 1.0),
-        ("1.5 mm²", 1.5),
-        ("2.5 mm²", 2.5),
-    )
 
     def __init__(self, tip):
         WireTipProxy._add_properties(tip)
@@ -32,12 +19,16 @@ class WireTipTaskPanel:
 
             ensure_core_properties(self.cable)
         self._updating = False
+        self._cross_section = (
+            FerruleData.cross_section_for_size(
+                getattr(self.cable, "WireSizeMM2", 0.0)
+            )
+            if self.cable is not None
+            else None
+        )
         self._original = self._snapshot()
         self._segment_length = self._tip_segment_length(tip, self.cable)
         self._max_offset = max(0.0, self._segment_length - TIP_OFFSET_MARGIN)
-        self._max_core_diameter = (
-            max(0.0, self.cable.Diameter.Value) if self.cable is not None else 0.0
-        )
 
         self.form = QtGui.QWidget()
         self.form.setWindowTitle("Cable Tip")
@@ -51,7 +42,7 @@ class WireTipTaskPanel:
 
         type_form = QtGui.QFormLayout()
         self.type_combo = QtGui.QComboBox()
-        self.type_combo.addItems(["Length offset", "Stripped wire"])
+        self.type_combo.addItems(["Length offset", "Stripped wire", "Ferrule"])
         self.type_combo.setCurrentText(getattr(tip, "TipType", "Length offset"))
         type_form.addRow("Tip type:", self.type_combo)
         layout.addLayout(type_form)
@@ -61,17 +52,18 @@ class WireTipTaskPanel:
             "Tip segment length:",
             QtGui.QLabel(f"{max(0.0, self._segment_length):.2f} mm"),
         )
-        context_form.addRow(
-            "Maximum length setting:",
-            QtGui.QLabel(f"{max(0.0, self._max_offset):.2f} mm"),
-        )
         layout.addLayout(context_form)
 
         self.stack = QtGui.QStackedWidget()
         self.stack.addWidget(self._build_offset_page())
         self.stack.addWidget(self._build_stripped_page())
+        self.stack.addWidget(self._build_ferrule_page())
         layout.addWidget(self.stack)
-        self.stack.setCurrentIndex(0 if self.type_combo.currentText() == "Length offset" else 1)
+        self.stack.setCurrentIndex(
+            {"Length offset": 0, "Stripped wire": 1, "Ferrule": 2}.get(
+                self.type_combo.currentText(), 0
+            )
+        )
 
         self._timer = QtCore.QTimer(self.form)
         self._timer.setSingleShot(True)
@@ -81,12 +73,17 @@ class WireTipTaskPanel:
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
         self.offset_spin.valueChanged.connect(lambda _value: self._schedule())
         self.stripped_spin.valueChanged.connect(lambda _value: self._schedule())
-        self.core_edit.textChanged.connect(self._on_core_text_changed)
-        self.core_unit.currentTextChanged.connect(self._on_unit_changed)
-        self.common_combo.currentTextChanged.connect(self._on_common_changed)
+        self.ferrule_type_combo.currentIndexChanged.connect(
+            self._on_ferrule_type_changed
+        )
+        self.ferrule_variant_combo.currentIndexChanged.connect(
+            self._on_ferrule_variant_changed
+        )
+        self.ferrule_color_combo.currentIndexChanged.connect(
+            self._on_ferrule_color_changed
+        )
 
-        self._set_core_controls(update_text=True)
-        self._update_core_display()
+        self._update_ferrule_details()
 
     def _build_offset_page(self):
         page = QtGui.QWidget()
@@ -125,113 +122,230 @@ class WireTipTaskPanel:
             min(max(0.0, self.tip.StrippedLength.Value), self._max_offset)
         )
         form.addRow("Stripped length:", self.stripped_spin)
-
-        self.core_size_widget = QtGui.QWidget()
-        core_layout = QtGui.QHBoxLayout(self.core_size_widget)
-        core_layout.setContentsMargins(0, 0, 0, 0)
-        self.core_edit = QtGui.QLineEdit()
-        self.core_unit = QtGui.QComboBox()
-        self.core_unit.addItems(["mm", "mm²"])
-        core_layout.addWidget(self.core_edit, 1)
-        core_layout.addWidget(self.core_unit)
-        form.addRow("Core size:", self.core_size_widget)
-
-        self.common_combo = QtGui.QComboBox()
-        self.common_combo.addItems(["Custom"] + [label for label, _ in self.PRESETS])
-        form.addRow("Common size:", self.common_combo)
-
-        self.core_diameter_label = QtGui.QLabel("")
-        form.addRow("Core diameter:", self.core_diameter_label)
         layout.addLayout(form)
-
-        self.core_warning = QtGui.QLabel("")
-        self.core_warning.setWordWrap(True)
-        self.core_warning.setStyleSheet("color: #b00000;")
-        layout.addWidget(self.core_warning)
 
         hint = QtGui.QLabel(
             "Removes the insulation over the stripped length and shows the "
-            "conductive core. The core size is shared by both cable ends and is "
-            "limited to the cable diameter. Select a common size or enter a "
-            "diameter/area; typed units switch the mm / mm² selector."
+            "conductive core. Cable diameter and core size are read from the "
+            "wire object (select a standard wire size in the cable tool for "
+            "standard cores)."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(1)
         return page
 
-    def _set_core_controls(self, update_text=False):
-        if self.cable is None:
-            return
-        mode = getattr(self.cable, "CoreSizeMode", "Area")
-        if mode == "Diameter":
-            value = getattr(self.cable, "CoreDiameter").Value
-            unit = "mm"
-        else:
-            value = getattr(self.cable, "CoreArea")
-            unit = "mm²"
+    def _build_ferrule_page(self):
+        page = QtGui.QWidget()
+        layout = QtGui.QVBoxLayout(page)
+        form = QtGui.QFormLayout()
+
+        self.ferrule_size_label = QtGui.QLabel("")
+        form.addRow("Cross-section:", self.ferrule_size_label)
+        self.ferrule_type_combo = QtGui.QComboBox()
+        form.addRow("Ferrule type:", self.ferrule_type_combo)
+        self.ferrule_variant_combo = QtGui.QComboBox()
+        form.addRow("Variant:", self.ferrule_variant_combo)
+        self.ferrule_color_combo = QtGui.QComboBox()
+        form.addRow("Sleeve code:", self.ferrule_color_combo)
+
+        color_widget = QtGui.QWidget()
+        color_layout = QtGui.QHBoxLayout(color_widget)
+        color_layout.setContentsMargins(0, 0, 0, 0)
+        self.ferrule_color_swatch = QtGui.QLabel()
+        self.ferrule_color_swatch.setFixedSize(24, 24)
+        self.ferrule_color_text = QtGui.QLabel("")
+        color_layout.addWidget(self.ferrule_color_swatch)
+        color_layout.addWidget(self.ferrule_color_text, 1)
+        form.addRow("Sleeve color:", color_widget)
+
+        self.ferrule_l1_label = QtGui.QLabel("")
+        self.ferrule_strip_label = QtGui.QLabel("")
+        form.addRow("Tip length:", self.ferrule_l1_label)
+        form.addRow("Stripped length:", self.ferrule_strip_label)
+        layout.addLayout(form)
+
+        self.ferrule_warning = QtGui.QLabel("")
+        self.ferrule_warning.setWordWrap(True)
+        self.ferrule_warning.setStyleSheet("color: #b00000;")
+        layout.addWidget(self.ferrule_warning)
+
+        hint = QtGui.QLabel(
+            "Ferrules are matched to the standard wire size selected in the "
+            "cable tool. The tip selects the ferrule type and, if needed, the "
+            "variant. Sleeve color comes from the DIN/T/W code for this size."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        self._ferrule_type_entries = []
+        self._populate_ferrule_controls()
+        return page
+
+    def _populate_ferrule_controls(self):
         self._updating = True
         try:
-            self.core_unit.setCurrentText(unit)
-            if update_text:
-                self.core_edit.setText(self._format_number(value))
-            area = (
-                math.pi * (value / 2.0) ** 2
-                if mode == "Diameter"
-                else max(0.0, value)
+            self.ferrule_type_combo.clear()
+            self.ferrule_variant_combo.clear()
+            self.ferrule_color_combo.clear()
+            self._ferrule_type_entries = []
+            if self._cross_section is None:
+                self.ferrule_size_label.setText(
+                    "No standard wire size selected (use the cable tool)"
+                )
+                self.ferrule_type_combo.setEnabled(False)
+                self.ferrule_variant_combo.setEnabled(False)
+                self.ferrule_color_combo.setEnabled(False)
+                self._update_ferrule_details()
+                return
+
+            entry = self._cross_section
+            self.ferrule_size_label.setText(FerruleData.size_label(entry))
+            for type_entry in FerruleData.ferrule_types(entry):
+                self.ferrule_type_combo.addItem(
+                    FerruleData.ferrule_type_label(type_entry),
+                    type_entry["type"],
+                )
+                self._ferrule_type_entries.append(type_entry)
+
+            wanted_type = getattr(self.tip, "FerruleType", "tube")
+            type_index = self.ferrule_type_combo.findData(wanted_type)
+            self.ferrule_type_combo.setCurrentIndex(
+                type_index if type_index >= 0 else 0
             )
-            self.common_combo.setCurrentText(self._preset_for_area(area))
+            self.ferrule_type_combo.setEnabled(bool(self._ferrule_type_entries))
+
+            systems = sorted(entry.get("color_codes", {}))
+            for system in systems:
+                code = entry["color_codes"][system]
+                info = FerruleData.color_info(code) or {}
+                label = f"{system} — {code} ({info.get('name', code)})"
+                self.ferrule_color_combo.addItem(label, system)
+            wanted_system = getattr(self.tip, "FerruleColorSystem", "DIN")
+            system_index = self.ferrule_color_combo.findData(wanted_system)
+            self.ferrule_color_combo.setCurrentIndex(
+                system_index if system_index >= 0 else 0
+            )
+            self.ferrule_color_combo.setEnabled(bool(systems))
+            self._populate_ferrule_variants()
         finally:
             self._updating = False
 
-    def _set_core_size(self, mode, value, update_text=True):
-        if self.cable is None:
-            return
-        value = max(0.0, value)
-        if mode == "Diameter":
-            diameter = value
-            area = math.pi * (diameter / 2.0) ** 2
-        else:
-            area = value
-            diameter = 2.0 * math.sqrt(area / math.pi)
+    def _selected_ferrule_type(self):
+        index = self.ferrule_type_combo.currentIndex()
+        if 0 <= index < len(self._ferrule_type_entries):
+            return self._ferrule_type_entries[index]
+        return None
+
+    def _populate_ferrule_variants(self):
         self._updating = True
         try:
-            self.cable.CoreSizeMode = mode
-            self.cable.CoreArea = area
-            self.cable.CoreDiameter = diameter
+            self.ferrule_variant_combo.clear()
+            type_entry = self._selected_ferrule_type()
+            if type_entry is None:
+                self.ferrule_variant_combo.setEnabled(False)
+                self._update_ferrule_details()
+                return
+            for variant_data in FerruleData.variants(type_entry):
+                self.ferrule_variant_combo.addItem(
+                    FerruleData.variant_label(variant_data)
+                )
+            self.ferrule_variant_combo.setEnabled(
+                self.ferrule_variant_combo.count() > 0
+            )
+            index = int(getattr(self.tip, "FerruleVariant", 0))
+            if index < 0 or index >= self.ferrule_variant_combo.count():
+                index = 0
+            self.ferrule_variant_combo.setCurrentIndex(index)
+            self._update_ferrule_details()
         finally:
             self._updating = False
-        self._set_core_controls(update_text=update_text)
-        self._update_core_display()
 
-    @staticmethod
-    def _format_number(value):
-        text = f"{value:.3f}".rstrip("0").rstrip(".")
-        return text or "0"
+    def _update_ferrule_details(self):
+        self.ferrule_l1_label.setStyleSheet("")
+        type_entry = self._selected_ferrule_type()
+        if type_entry is None:
+            self.ferrule_l1_label.setText("—")
+            self.ferrule_strip_label.setText("—")
+            self.ferrule_warning.setText("")
+            self.ferrule_color_text.setText("")
+            self.ferrule_color_swatch.setStyleSheet("")
+            return
 
-    @classmethod
-    def _preset_for_area(cls, area):
-        for label, preset_area in cls.PRESETS:
-            if abs(area - preset_area) < 1e-4:
-                return label
-        return "Custom"
+        variant_data = FerruleData.variant(
+            type_entry, self.ferrule_variant_combo.currentIndex()
+        )
+        if variant_data is None:
+            self.ferrule_l1_label.setText("—")
+            self.ferrule_strip_label.setText("—")
+            self.ferrule_warning.setText("")
+            return
 
-    def _parse_core_size(self, text):
-        if self.cable is None:
-            return None
-        match = NUMBER_PATTERN.match(text)
-        if match is None:
-            return None
-        value = float(match.group(1).replace(",", "."))
-        unit = (match.group(2) or "").lower().replace(" ", "")
-        current_mode = getattr(self.cable, "CoreSizeMode", "Area")
-        if unit in ("mm²", "mm2", "mm^2", "mm^2"):
-            mode = "Area"
-        elif unit == "mm":
-            mode = "Diameter"
+        tip_length = variant_data["l1_mm"]
+        strip_length = FerruleData.strip_length(variant_data)
+        self.ferrule_l1_label.setText(f"{tip_length:.2f} mm")
+        self.ferrule_strip_label.setText(f"{strip_length:.2f} mm")
+
+        system = self.ferrule_color_combo.currentData()
+        info, code = FerruleData.color_for_system(self._cross_section, system)
+        if info:
+            self.ferrule_color_swatch.setStyleSheet(
+                f"background-color: {info['hex']}; border: 1px solid #000;"
+            )
+            self.ferrule_color_text.setText(f"{code} ({info['name']})")
         else:
-            mode = current_mode
-        return mode, value
+            self.ferrule_color_swatch.setStyleSheet("")
+            self.ferrule_color_text.setText("")
+
+        warnings = []
+        if tip_length > self._segment_length + 1e-9:
+            self.ferrule_l1_label.setStyleSheet("color: #b00000;")
+            warnings.append(
+                f"Tip length exceeds the available tip segment "
+                f"({self._segment_length:.2f} mm). Increase the tip-segment "
+                "length."
+            )
+        if not variant_data.get("conforming", True):
+            warnings.append("This variant is marked as not conforming to the standard.")
+        if self.cable is not None:
+            try:
+                core_diameter = self.cable.CoreDiameter.Value
+            except Exception:
+                core_diameter = 0.0
+            if core_diameter > variant_data["d1_mm"] + 1e-9:
+                warnings.append(
+                    f"Core diameter {core_diameter:.2f} mm exceeds the "
+                    f"ferrule inner diameter d1 {variant_data['d1_mm']:.2f} mm."
+                )
+        self.ferrule_warning.setText(" ".join(warnings))
+
+    def _on_ferrule_type_changed(self, _index):
+        if self._updating:
+            return
+        type_entry = self._selected_ferrule_type()
+        if type_entry is None:
+            return
+        self.tip.FerruleType = type_entry["type"]
+        self.tip.FerruleVariant = 0
+        self._populate_ferrule_variants()
+        self._schedule()
+
+    def _on_ferrule_variant_changed(self, index):
+        if self._updating:
+            return
+        self.tip.FerruleVariant = max(0, index)
+        self._update_ferrule_details()
+        self._schedule()
+
+    def _on_ferrule_color_changed(self, _index):
+        if self._updating:
+            return
+        system = self.ferrule_color_combo.currentData()
+        if system:
+            self.tip.FerruleColorSystem = system
+        self._update_ferrule_details()
+        self._schedule()
 
     def _schedule(self):
         self._timer.start()
@@ -239,95 +353,34 @@ class WireTipTaskPanel:
     def _on_type_changed(self, text):
         if self._updating:
             return
-        self.stack.setCurrentIndex(0 if text == "Length offset" else 1)
+        self.stack.setCurrentIndex(
+            {"Length offset": 0, "Stripped wire": 1, "Ferrule": 2}.get(text, 0)
+        )
         self._schedule()
-
-    def _on_core_text_changed(self, _text):
-        if not self._updating:
-            self._schedule()
-
-    def _on_unit_changed(self, text):
-        if self._updating or self.cable is None:
-            return
-        mode = "Area" if text == "mm²" else "Diameter"
-        current_mode = getattr(self.cable, "CoreSizeMode", "Area")
-        if mode == current_mode:
-            return
-        diameter = max(0.0, getattr(self.cable, "CoreDiameter").Value)
-        if mode == "Area":
-            self._set_core_size("Area", math.pi * (diameter / 2.0) ** 2)
-        else:
-            self._set_core_size("Diameter", diameter)
-        self._schedule()
-
-    def _on_common_changed(self, text):
-        if self._updating or text == "Custom":
-            return
-        for label, area in self.PRESETS:
-            if label == text:
-                self._set_core_size("Area", area)
-                self._schedule()
-                return
 
     def _apply_live(self):
         if self.tip is None or not self.tip.isValid():
             return
-        tip_type = self.type_combo.currentText()
-        self.tip.TipType = tip_type
+        self.tip.TipType = self.type_combo.currentText()
         self.tip.LengthOffset = min(
             self.offset_spin.value(), self._max_offset
         )
         self.tip.StrippedLength = min(
             self.stripped_spin.value(), self._max_offset
         )
-
-        parsed = self._parse_core_size(self.core_edit.text())
-        if parsed is not None:
-            mode, value = parsed
-            current_mode = getattr(self.cable, "CoreSizeMode", "Area")
-            current_value = (
-                getattr(self.cable, "CoreDiameter").Value
-                if current_mode == "Diameter"
-                else getattr(self.cable, "CoreArea")
-            )
-            if mode != current_mode or abs(current_value - value) > 1e-9:
-                self._set_core_size(mode, value, update_text=False)
-            if mode == "Area":
-                self._set_unit_and_common("mm²", value)
-            else:
-                self._set_unit_and_common("mm", math.pi * (value / 2.0) ** 2)
-
-        self._update_core_display()
+        if self._cross_section is not None:
+            type_entry = self._selected_ferrule_type()
+            if type_entry is not None:
+                self.tip.FerruleType = type_entry["type"]
+            variant_index = self.ferrule_variant_combo.currentIndex()
+            if variant_index >= 0:
+                self.tip.FerruleVariant = variant_index
+            system = self.ferrule_color_combo.currentData()
+            if system:
+                self.tip.FerruleColorSystem = system
+        self._update_ferrule_details()
         if self.tip.Document is not None:
             self.tip.Document.recompute()
-
-    def _set_unit_and_common(self, unit, area):
-        self._updating = True
-        try:
-            self.core_unit.setCurrentText(unit)
-            self.common_combo.setCurrentText(self._preset_for_area(area))
-        finally:
-            self._updating = False
-
-    def _update_core_display(self):
-        requested = 0.0
-        if self.cable is not None:
-            try:
-                requested = max(0.0, getattr(self.cable, "CoreDiameter").Value)
-            except Exception:
-                pass
-        if self._max_core_diameter > 0.0:
-            effective = min(requested, self._max_core_diameter)
-        else:
-            effective = requested
-        self.core_diameter_label.setText(f"{effective:.2f} mm")
-        if self._max_core_diameter > 0.0 and requested > self._max_core_diameter + 1e-9:
-            self.core_warning.setText(
-                f"Core diameter limited to cable diameter "
-                f"{self._max_core_diameter:.2f} mm."
-            )
-        else:
-            self.core_warning.setText("")
 
     @staticmethod
     def _find_cable(tip):
@@ -350,30 +403,23 @@ class WireTipTaskPanel:
             return 0.0
 
     def _snapshot(self):
-        snapshot = {
+        return {
             "TipType": getattr(self.tip, "TipType", "Length offset"),
             "LengthOffset": self.tip.LengthOffset.Value,
             "StrippedLength": self.tip.StrippedLength.Value,
+            "FerruleType": getattr(self.tip, "FerruleType", "tube"),
+            "FerruleVariant": getattr(self.tip, "FerruleVariant", 0),
+            "FerruleColorSystem": getattr(self.tip, "FerruleColorSystem", "DIN"),
         }
-        if self.cable is not None:
-            snapshot.update(
-                {
-                    "CoreSizeMode": getattr(self.cable, "CoreSizeMode", "Area"),
-                    "CoreArea": getattr(self.cable, "CoreArea", 1.0),
-                    "CoreDiameter": getattr(self.cable, "CoreDiameter").Value,
-                }
-            )
-        return snapshot
 
     def _restore(self, values):
         try:
             self.tip.TipType = values["TipType"]
             self.tip.LengthOffset = values["LengthOffset"]
             self.tip.StrippedLength = values["StrippedLength"]
-            if self.cable is not None:
-                self.cable.CoreSizeMode = values["CoreSizeMode"]
-                self.cable.CoreArea = values["CoreArea"]
-                self.cable.CoreDiameter = values["CoreDiameter"]
+            self.tip.FerruleType = values["FerruleType"]
+            self.tip.FerruleVariant = values["FerruleVariant"]
+            self.tip.FerruleColorSystem = values["FerruleColorSystem"]
         except Exception:
             pass
 

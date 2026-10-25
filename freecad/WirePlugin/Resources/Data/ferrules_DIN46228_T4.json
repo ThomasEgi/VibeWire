@@ -1,0 +1,913 @@
+{
+  "schema_version": 2,
+  "source_csv": "wire_end_sleeves_DIN_46228_T4_complete.csv",
+  "units": "mm",
+  "color_palette": {
+    "BE": {
+      "name": "beige",
+      "hex": "#F5F5DC"
+    },
+    "BK": {
+      "name": "black",
+      "hex": "#000000"
+    },
+    "BN": {
+      "name": "brown",
+      "hex": "#8B4513"
+    },
+    "BU": {
+      "name": "blue",
+      "hex": "#0000FF"
+    },
+    "GN": {
+      "name": "green",
+      "hex": "#008000"
+    },
+    "GY": {
+      "name": "grey",
+      "hex": "#808080"
+    },
+    "IV": {
+      "name": "ivory",
+      "hex": "#FFFFF0"
+    },
+    "OG": {
+      "name": "orange",
+      "hex": "#FFA500"
+    },
+    "OL": {
+      "name": "olive",
+      "hex": "#808000"
+    },
+    "PK": {
+      "name": "pink",
+      "hex": "#FF69B4"
+    },
+    "RD": {
+      "name": "red",
+      "hex": "#FF0000"
+    },
+    "TQ": {
+      "name": "turquoise",
+      "hex": "#40E0D0"
+    },
+    "VT": {
+      "name": "violet",
+      "hex": "#800080"
+    },
+    "WH": {
+      "name": "white",
+      "hex": "#FFFFFF"
+    },
+    "YE": {
+      "name": "yellow",
+      "hex": "#FFD700"
+    }
+  },
+  "cross_sections": [
+    {
+      "cross_section_mm2": 0.14,
+      "awg": "26",
+      "color_codes": {
+        "DIN": "GY",
+        "T": "BN",
+        "W": "GY"
+      },
+      "cable_diameter_mm": 0.9,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 10.0,
+              "l2_mm": 6.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            },
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 8.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 0.25,
+      "awg": "24",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "VT",
+        "W": "BU"
+      },
+      "cable_diameter_mm": 0.9,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 10.0,
+              "l2_mm": 6.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 8.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 12.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 0.34,
+      "awg": "22",
+      "color_codes": {
+        "DIN": "TQ",
+        "T": "PK",
+        "W": "TQ"
+      },
+      "cable_diameter_mm": 0.9,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 10.0,
+              "l2_mm": 6.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 8.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 12.0,
+              "d1_mm": 0.8,
+              "s1_mm": 0.15,
+              "d2_mm": 1.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 0.5,
+      "awg": "20",
+      "color_codes": {
+        "DIN": "WH",
+        "T": "WH",
+        "W": "OG"
+      },
+      "cable_diameter_mm": 1.4,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 6.0,
+              "d1_mm": 1.1,
+              "s1_mm": 0.15,
+              "d2_mm": 2.4,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 14.0,
+              "l2_mm": 8.0,
+              "d1_mm": 1.1,
+              "s1_mm": 0.15,
+              "d2_mm": 2.4,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 10.0,
+              "d1_mm": 1.1,
+              "s1_mm": 0.15,
+              "d2_mm": 2.4,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 18.0,
+              "l2_mm": 12.0,
+              "d1_mm": 1.1,
+              "s1_mm": 0.15,
+              "d2_mm": 2.4,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 0.75,
+      "awg": "20",
+      "color_codes": {
+        "DIN": "GY",
+        "T": "BU",
+        "W": "WH"
+      },
+      "cable_diameter_mm": 1.7,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 6.0,
+              "d1_mm": 1.3,
+              "s1_mm": 0.15,
+              "d2_mm": 2.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 14.0,
+              "l2_mm": 8.0,
+              "d1_mm": 1.3,
+              "s1_mm": 0.15,
+              "d2_mm": 2.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 10.0,
+              "d1_mm": 1.3,
+              "s1_mm": 0.15,
+              "d2_mm": 2.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 18.0,
+              "l2_mm": 12.0,
+              "d1_mm": 1.3,
+              "s1_mm": 0.15,
+              "d2_mm": 2.7,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 1.0,
+      "awg": "18",
+      "color_codes": {
+        "DIN": "RD",
+        "T": "RD",
+        "W": "YE"
+      },
+      "cable_diameter_mm": 1.9,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 6.0,
+              "d1_mm": 1.5,
+              "s1_mm": 0.15,
+              "d2_mm": 2.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 14.0,
+              "l2_mm": 8.0,
+              "d1_mm": 1.5,
+              "s1_mm": 0.15,
+              "d2_mm": 2.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 10.0,
+              "d1_mm": 1.5,
+              "s1_mm": 0.15,
+              "d2_mm": 2.9,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 18.0,
+              "l2_mm": 12.0,
+              "d1_mm": 1.5,
+              "s1_mm": 0.15,
+              "d2_mm": 2.9,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 1.5,
+      "awg": "16",
+      "color_codes": {
+        "DIN": "BK",
+        "T": "BK",
+        "W": "RD"
+      },
+      "cable_diameter_mm": 2.3,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 12.0,
+              "l2_mm": 6.0,
+              "d1_mm": 1.8,
+              "s1_mm": 0.15,
+              "d2_mm": 3.3,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            },
+            {
+              "l1_mm": 14.0,
+              "l2_mm": 8.0,
+              "d1_mm": 1.8,
+              "s1_mm": 0.15,
+              "d2_mm": 3.3,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 16.0,
+              "l2_mm": 10.0,
+              "d1_mm": 1.8,
+              "s1_mm": 0.15,
+              "d2_mm": 3.3,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 18.0,
+              "l2_mm": 12.0,
+              "d1_mm": 1.8,
+              "s1_mm": 0.15,
+              "d2_mm": 3.3,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            },
+            {
+              "l1_mm": 24.0,
+              "l2_mm": 18.0,
+              "d1_mm": 1.8,
+              "s1_mm": 0.15,
+              "d2_mm": 3.3,
+              "s2_mm": 0.3,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 2.08,
+      "awg": "14",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "YE",
+        "W": "YE"
+      },
+      "cable_diameter_mm": 2.5,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 14.0,
+              "l2_mm": 8.0,
+              "d1_mm": 2.05,
+              "s1_mm": 0.15,
+              "d2_mm": 3.5,
+              "s2_mm": 0.3,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 2.5,
+      "awg": "14",
+      "color_codes": {
+        "DIN": "BU",
+        "T": "GY",
+        "W": "BU"
+      },
+      "cable_diameter_mm": 3.1,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 15.0,
+              "l2_mm": 8.0,
+              "d1_mm": 2.3,
+              "s1_mm": 0.15,
+              "d2_mm": 4.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 17.0,
+              "l2_mm": 10.0,
+              "d1_mm": 2.3,
+              "s1_mm": 0.15,
+              "d2_mm": 4.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 19.0,
+              "l2_mm": 12.0,
+              "d1_mm": 2.3,
+              "s1_mm": 0.15,
+              "d2_mm": 4.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 25.0,
+              "l2_mm": 18.0,
+              "d1_mm": 2.3,
+              "s1_mm": 0.15,
+              "d2_mm": 4.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 4.0,
+      "awg": "12",
+      "color_codes": {
+        "DIN": "GY",
+        "T": "OG",
+        "W": "GY"
+      },
+      "cable_diameter_mm": 3.7,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 17.0,
+              "l2_mm": 10.0,
+              "d1_mm": 2.9,
+              "s1_mm": 0.2,
+              "d2_mm": 4.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 19.0,
+              "l2_mm": 12.0,
+              "d1_mm": 2.9,
+              "s1_mm": 0.2,
+              "d2_mm": 4.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 25.0,
+              "l2_mm": 18.0,
+              "d1_mm": 2.9,
+              "s1_mm": 0.2,
+              "d2_mm": 4.7,
+              "s2_mm": 0.3,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 6.0,
+      "awg": "10",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "GN",
+        "W": "BK"
+      },
+      "cable_diameter_mm": 5.1,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 20.0,
+              "l2_mm": 12.0,
+              "d1_mm": 3.6,
+              "s1_mm": 0.2,
+              "d2_mm": 6.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            },
+            {
+              "l1_mm": 26.0,
+              "l2_mm": 18.0,
+              "d1_mm": 3.6,
+              "s1_mm": 0.2,
+              "d2_mm": 6.1,
+              "s2_mm": 0.3,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 10.0,
+      "awg": "8",
+      "color_codes": {
+        "DIN": "RD",
+        "T": "BN",
+        "W": "IV"
+      },
+      "cable_diameter_mm": 6.4,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 21.0,
+              "l2_mm": 12.0,
+              "d1_mm": 4.6,
+              "s1_mm": 0.2,
+              "d2_mm": 7.4,
+              "s2_mm": 0.4,
+              "conforming": true
+            },
+            {
+              "l1_mm": 27.0,
+              "l2_mm": 18.0,
+              "d1_mm": 4.6,
+              "s1_mm": 0.2,
+              "d2_mm": 7.4,
+              "s2_mm": 0.4,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 16.0,
+      "awg": "6",
+      "color_codes": {
+        "DIN": "BU",
+        "T": "WH",
+        "W": "GN"
+      },
+      "cable_diameter_mm": 7.6,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 23.0,
+              "l2_mm": 12.0,
+              "d1_mm": 6.0,
+              "s1_mm": 0.2,
+              "d2_mm": 8.6,
+              "s2_mm": 0.5,
+              "conforming": true
+            },
+            {
+              "l1_mm": 29.0,
+              "l2_mm": 18.0,
+              "d1_mm": 6.0,
+              "s1_mm": 0.2,
+              "d2_mm": 8.6,
+              "s2_mm": 0.5,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 25.0,
+      "awg": "4",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "BK",
+        "W": "BN"
+      },
+      "cable_diameter_mm": 9.9,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 29.0,
+              "l2_mm": 16.0,
+              "d1_mm": 7.5,
+              "s1_mm": 0.2,
+              "d2_mm": 10.9,
+              "s2_mm": 0.5,
+              "conforming": true
+            },
+            {
+              "l1_mm": 31.0,
+              "l2_mm": 18.0,
+              "d1_mm": 7.5,
+              "s1_mm": 0.2,
+              "d2_mm": 10.9,
+              "s2_mm": 0.5,
+              "conforming": true
+            },
+            {
+              "l1_mm": 35.0,
+              "l2_mm": 22.0,
+              "d1_mm": 7.5,
+              "s1_mm": 0.2,
+              "d2_mm": 10.9,
+              "s2_mm": 0.5,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 35.0,
+      "awg": "2",
+      "color_codes": {
+        "DIN": "RD",
+        "T": "RD",
+        "W": "BE"
+      },
+      "cable_diameter_mm": 11.3,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 30.0,
+              "l2_mm": 16.0,
+              "d1_mm": 8.5,
+              "s1_mm": 0.2,
+              "d2_mm": 12.3,
+              "s2_mm": 0.5,
+              "conforming": true
+            },
+            {
+              "l1_mm": 32.0,
+              "l2_mm": 18.0,
+              "d1_mm": 8.5,
+              "s1_mm": 0.2,
+              "d2_mm": 12.3,
+              "s2_mm": 0.5,
+              "conforming": true
+            },
+            {
+              "l1_mm": 39.0,
+              "l2_mm": 25.0,
+              "d1_mm": 8.5,
+              "s1_mm": 0.2,
+              "d2_mm": 12.3,
+              "s2_mm": 0.5,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 50.0,
+      "awg": "1/0",
+      "color_codes": {
+        "DIN": "BU",
+        "T": "BU",
+        "W": "OL"
+      },
+      "cable_diameter_mm": 13.8,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 36.0,
+              "l2_mm": 20.0,
+              "d1_mm": 10.5,
+              "s1_mm": 0.3,
+              "d2_mm": 14.8,
+              "s2_mm": 0.6,
+              "conforming": true
+            },
+            {
+              "l1_mm": 41.0,
+              "l2_mm": 25.0,
+              "d1_mm": 10.5,
+              "s1_mm": 0.3,
+              "d2_mm": 14.8,
+              "s2_mm": 0.6,
+              "conforming": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 70.0,
+      "awg": "2/0",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "YE",
+        "W": "YE"
+      },
+      "cable_diameter_mm": 14.8,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 37.0,
+              "l2_mm": 20.0,
+              "d1_mm": 12.7,
+              "s1_mm": 0.4,
+              "d2_mm": 15.8,
+              "s2_mm": 0.6,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            },
+            {
+              "l1_mm": 44.0,
+              "l2_mm": 27.0,
+              "d1_mm": 12.7,
+              "s1_mm": 0.4,
+              "d2_mm": 15.8,
+              "s2_mm": 0.6,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 95.0,
+      "awg": "3/0",
+      "color_codes": {
+        "DIN": "RD",
+        "T": "RD",
+        "W": "RD"
+      },
+      "cable_diameter_mm": 16.7,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 44.0,
+              "l2_mm": 25.0,
+              "d1_mm": 14.7,
+              "s1_mm": 0.4,
+              "d2_mm": 17.7,
+              "s2_mm": 0.6,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 120.0,
+      "awg": "250 MCM",
+      "color_codes": {
+        "DIN": "BU",
+        "T": "BU",
+        "W": "BU"
+      },
+      "cable_diameter_mm": 19.7,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 48.0,
+              "l2_mm": 27.0,
+              "d1_mm": 16.7,
+              "s1_mm": 0.5,
+              "d2_mm": 20.7,
+              "s2_mm": 0.7,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cross_section_mm2": 150.0,
+      "awg": "300 MCM",
+      "color_codes": {
+        "DIN": "YE",
+        "T": "YE",
+        "W": "YE"
+      },
+      "cable_diameter_mm": 21.6,
+      "ferrules": [
+        {
+          "type": "tube",
+          "standard": "DIN 46228 T4",
+          "variants": [
+            {
+              "l1_mm": 58.0,
+              "l2_mm": 32.0,
+              "d1_mm": 18.7,
+              "s1_mm": 0.5,
+              "d2_mm": 22.6,
+              "s2_mm": 1.0,
+              "conforming": false,
+              "note": "Not conform to DIN 46228 T4"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

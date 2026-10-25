@@ -181,6 +181,7 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 
 ### Source Data
 - Input CSV: `wire_end_sleeves_DIN_46228_T4_complete.csv` in the project directory.
+- Input CSV: `cable_colors_DIN47100.csv` for the DIN 47100 insulation color sequence; only single-color entries (numbers 1-10) are currently exposed as cable colors.
 - Columns: `cross_section_mm2`, `AWG`, `color_code_DIN`, `color_code_T`, `color_code_W`, `total_legnth_l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm`, `standard`, `Not according to norm`.
 - Normalize `total_legnth_l1_mm` to `total_length_l1_mm` in the JSON.
 - `L1` is the total ferrule length including the protective plastic sleeve over the wire insulation.
@@ -192,41 +193,46 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - Preserve the nonconforming flag per row; show it as a warning in the selector.
 
 ### Requirements
-- [ ] **JSON ferrule library**: Convert the CSV into a checked-in JSON file grouped by cross-section/AWG with all L1/L2 variants, dimensions, color codes and conformity flags.
-- [ ] **Data converter**: Add a small script to regenerate the JSON from the CSV and validate required fields, units and duplicate variants.
-- [ ] **Wire size selector**: Add a wire-size dropdown to the cable tool populated from the JSON; show cross-section and AWG. Standard sizes derive the cable outer diameter from `d2 - 1.0 mm`; `Custom wire size` keeps the current editable diameter field.
-- [ ] **Custom wire size**: When `Custom wire size` is selected, show the current diameter field as today; for standard sizes show the derived diameter as read-only/informational.
-- [ ] **Ferrule tip type**: Add `Ferrule` to the tip-type dropdown in the cable-tip editor.
-- [ ] **Ferrule variant selector**: For a selected standard wire size, offer only the matching ferrule L1/L2 variants; store the chosen variant per cable end. Custom wire sizes do not select a predefined ferrule.
-- [ ] **Ferrule geometry**: Model the conductive tip as a tube of length `L2`, inner diameter `d1`, wall `s1`; expand through a 45 degree plastic cone until the sleeve diameter is reached; model the colored protective sleeve with inner `d2`, wall `s2`; total length `L1`.
-- [ ] **Sleeve color**: Select the sleeve color through the DIN/T/W color-code table for the selected wire size; color the plastic sleeve and its cone. The metal tip stays metallic.
-- [ ] **Wire insulation color**: Add a separate cable-level wire-insulation color selection in the cable tool; keep it independent from the ferrule sleeve color.
+- [x] **JSON ferrule library**: Convert the CSV into a checked-in JSON file with units, color palette and a cross-section list. Each cross-section carries its color codes and available ferrule entries; each ferrule entry has a geometry `type` (e.g. `tube`), its standard, and one or more property variants.
+- [x] **Data converter**: Add a small script to regenerate the JSON from the CSV and validate required fields, units and duplicate variants. It is an example converter; new input formats may need modifications.
+- [x] **Wire size selector**: Add a wire-size dropdown to the cable tool populated from the JSON; show cross-section and AWG. Standard sizes derive the cable outer diameter from `d2 - 1.0 mm`; `Custom wire size` keeps the current editable diameter field.
+- [x] **Custom wire size**: When `Custom wire size` is selected, show/editable cable diameter and core diameter fields; for standard sizes show the derived diameter/core as read-only/informational.
+- [x] **Ferrule tip type**: Add `Ferrule` to the tip-type dropdown in the cable-tip editor.
+- [x] **Ferrule type/variant selector**: After selecting a cross-section/AWG, choose the ferrule type (for example `tube`) per tip, then pick one of its variants when several exist. Show the standard carried by the selected ferrule entry. Custom wire sizes do not select a predefined ferrule.
+- [x] **Ferrule geometry**: Model the conductive tip as a tube of length `L2`, inner diameter `d1`, wall `s1`; expand through a 45 degree plastic cone until the sleeve diameter is reached; model the colored protective sleeve with inner `d2`, wall `s2`; total length `L1`.
+- [x] **Sleeve color**: Select the sleeve color through the DIN/T/W color-code table for the selected wire size; color the plastic sleeve and its cone. The metal tip stays metallic.
+- [x] **Wire insulation color**: Add a separate cable-level wire-insulation color selection in the cable tool; keep it independent from the ferrule sleeve color. Options come from the single-color DIN 47100 entries (CSV numbers 1-10).
 - [ ] **Yellow-green protective earth**: Render PE insulation as alternating yellow/green bands. Keep the color system extensible for other special wire codings.
-- [ ] **Stripped length**: The cable's stripped length is the conductive tip length `L2` plus the 45 degree cone length; trim the outer insulation accordingly and expose the core.
-- [ ] **Core compatibility**: For a predefined cross-section, enforce the corresponding core size. Ferrules are matched to that cross-section and color code. Validate that the core fits inside `d1`.
-- [ ] **Persistence/recompute**: Store wire size, ferrule variant, sleeve code and insulation color on the cable/tips; recompute ferrule and cable geometry when any change occurs.
+- [x] **Stripped length**: The cable's stripped length is the conductive tip length `L2` plus the 45 degree cone length; trim the outer insulation accordingly and expose the core.
+- [x] **Core compatibility**: For a predefined cross-section, enforce the corresponding core size. Ferrules are matched to that cross-section and color code. Validate that the core fits inside `d1`.
+- [x] **Persistence/recompute (data/menus)**: Store wire size, ferrule type/variant, sleeve color system and cable insulation color on the cable/tips; cable stripping/core geometry recomputes on change.
+- [x] **Live tool updates**: Changes to segments/references, wire size, diameters or bend radius update the cable immediately with a short debounce; once more than one segment exists the tool auto-creates the path/cable. Incomplete routes keep the valid prefix visible as the red path (preview mode) and show an orange status message.
 
 ### Technical Details
-- JSON structure: sizes grouped by `cross_section_mm2`/`AWG`, each with `color_codes` (DIN/T/W) and a list of `variants` containing `l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm` and `conforming`.
+- JSON structure: top-level `schema_version`, `source_csv`, `units`, `color_palette`, and `cross_sections`. Each cross-section has `cross_section_mm2`, `awg`, `color_codes` (DIN/T/W), derived `cable_diameter_mm`, and `ferrules`. Each ferrule entry has `type`, `standard`, and `variants`; each variant contains `l1_mm`, `l2_mm`, `d1_mm`, `s1_mm`, `d2_mm`, `s2_mm`, `conforming` and an optional `note`.
 - Keep the CSV as the source of truth and commit the generated JSON under the plugin resources; the converter can be run manually when the CSV changes.
 - Color palette mapping: GY grey, BN brown, YE yellow, VT violet, TQ turquoise, PK pink, WH white, OG orange, RD red, BK black, GN green, BU blue, IV ivory, BE beige, OL olive. Use reasonable clearly distinct HTML-style colors in the JSON; exact RGB values are not critical.
 - Ferrule dimensions: metal outer diameter = `d1 + 2*s1`; sleeve outer diameter = `d2 + 2*s2`; 45 degree cone length = `(sleeve_outer - metal_outer) / 2`; cone length is included in the `L2` dimension per review; remaining sleeve length = `L1 - L2 - cone_length`, validated to be positive.
 - The ferrule metal part and colored sleeve/cone can be separate helper `Part::Feature` objects in the cable group; the exposed conductive core is generated by the existing stripped-tip machinery.
 - The cable outer diameter is driven by the ferrule sleeve (`d2 - 1.0 mm`) for standard sizes; standard sizes also enforce the matching core size. Custom wire sizes keep the current diameter/core editing behavior and do not use predefined ferrules.
-- The tip panel ferrule page shows the selected size, L1/L2 variant, computed cone/sleeve/strip lengths, sleeve color preview and conformity warning.
-- Data-driven common sizes replace the temporary hardcoded 1.0/1.5/2.5 mm² preset list in the existing stripped-wire panel.
+- The tip panel ferrule page shows the selected size, type/variant, sleeve color preview, tip length (`L1`) and stripped length. The tip length is flagged red with an error when it exceeds the available tip-segment length.
+- Ferrule data is loaded by `FerruleData.py`; the cable tool gets the wire-size menu and the tip panel gets ferrule type/variant/sleeve-code menus, a color preview and tip/stripped length. Core size is read from the cable, not edited in the tip panel.
+- The UI flow is cross-section/AWG → ferrule type → variant, with the type and standard shown in the selector.
 - Yellow-green PE insulation is rendered as alternating yellow/green bands. The color system should remain extensible for other special wire codings.
-- Keep the ferrule sleeve/cone color separate from the cable-level wire insulation color in both data and UI.
+- Keep the ferrule sleeve/cone color separate from the cable-level wire insulation color in both data and UI. The cable tool exposes DIN 47100 single colors only; double and triple colors from the CSV remain data for future multi-wire coding work.
 
 ### Acceptance Criteria
 - The JSON library loads and the wire-size dropdown lists all available sizes.
 - A standard wire size derives the cable diameter from `d2 - 1.0 mm` and enforces the matching core size; custom size shows/edits the current diameter/core.
-- The tip editor can create a ferrule with a selected size, L1/L2 variant and DIN/T/W sleeve color.
+- The tip editor can select a cross-section/AWG, ferrule type, variant and DIN/T/W sleeve color.
+- Custom wire size lets the user set both cable diameter and core diameter; tool edits update an existing cable live.
 - Ferrule geometry shows the metallic conductive tip, 45 degree plastic cone and colored sleeve with dimensions from the data; cone and sleeve share the selected color.
 - The cable outer insulation is stripped over `L2 + cone_length`; the exposed core fits `d1` or shows a warning.
 - Ferrule sleeve/cone color follows the selected DIN/T/W code; wire insulation color is cable-level and independently selectable.
 - Yellow-green PE insulation is shown as alternating bands and is visually distinguishable.
 - Changing wire size, ferrule variant or color updates both ends/geometry as applicable.
+
+> **Implementation note:** Wire-size and ferrule menus are populated from the JSON. Ferrule tips now generate the metallic tip, colored plastic cone/sleeve and exposed-core geometry. Cable-level insulation color selection is implemented; yellow-green PE band rendering remains.
 
 ### Resolved Decisions
 - Cone length is included in the `L2` dimension per review; sleeve length is `L1 - L2 - cone_length`.
@@ -236,6 +242,55 @@ Goal: Model real wire-end ferrules from the DIN 46228 T4 data, select standard w
 - Selecting a predefined cross-section enforces the matching core size.
 - Ferrule variants match the selected cross-section and color code.
 - Wire insulation colors are cable-level and independent from the ferrule sleeve/cone color.
+- The ferrule standard is stored on each ferrule type entry, not globally.
+
+## Milestone 2D: Tool Transactions and Undo (Follow-up)
+Goal: Make tool-session edits reversible as one operation and support normal undo while tools are open.
+
+### Requirements
+- [ ] **Tool transaction**: Opening a tool starts a FreeCAD transaction or equivalent snapshot of the affected objects and properties.
+- [ ] **Live edits in a session**: Changes inside the tool apply live but remain grouped as one tool-session operation.
+- [ ] **Cancel/rollback**: Canceling or closing with revert restores the opening snapshot, including objects created or removed during the session.
+- [ ] **Commit as one undo step**: Confirming the tool commits all session edits so a single undo reverts the whole session.
+- [ ] **Undo while open**: Normal undo/redo works while the tool is open without leaving partial objects or breaking live updates.
+- [ ] **Helpers and renames**: Handle helper-object creation/deletion, group changes, label changes and dependency recomputes.
+- [ ] **Recorder safety**: Avoid duplicate objects, transaction-recorder corruption and deferred-deletion conflicts.
+
+### Technical Details
+- Wrap tool sessions with `Document.openTransaction` / `commitTransaction` / `abortTransaction` or a session snapshot helper.
+- Capture a snapshot when the tool opens and compare/restore on close; commit once on OK.
+- Apply live edits within the open transaction; never commit per keystroke or per spin step.
+- Coordinate with deferred deletion cleanup and FreeCAD's GUI command recorder.
+- Cover the cable tool, tip tool and harness editor with the same session mechanism.
+
+### Acceptance Criteria
+- A single undo after a tool session reverts all changes made while the tool was open.
+- Cancel restores the previous state, including created/removed helpers and renamed objects.
+- Live edits are visible during the session but batched into one undo step.
+- Undo/redo leaves no stale or duplicate objects.
+
+## Milestone 2E: Wire Destination and Label Export (Follow-up)
+Goal: Store what each cable end connects to and expose that data for wire labeling and label-printer workflows.
+
+### Requirements
+- [ ] **Tip destination**: Add a `Destination` property to each `WireTip`, editable in the tip panel; support free-form EN IEC 81346-1 style reference designations.
+- [ ] **Cable endpoint metadata**: Show each tip's destination in the cable/tip editor and expose both endpoint destinations for wire lists and labels.
+- [ ] **Label data export**: Export wire-label data containing at least wire name, source/destination, cross-section/AWG, insulation/sleeve color and length.
+- [ ] **Label-printer workflow**: Export label-ready data (CSV/JSON first, optional ZPL/printer templates later) for selected wires or all wires in a harness.
+- [ ] **Persistence/validation**: Preserve destinations across save/reload and warn about missing or duplicate endpoint destinations where useful.
+
+### Technical Details
+- Store `Destination` as an `App::PropertyString` on `WireTip`; do not add a tip→cable link.
+- Keep EN IEC 81346-1 designations as free text initially; structured parsing can be added later.
+- Wire labels can show both ends, for example `wire name`, `source → destination`, and wire/cross-section/color/length metadata.
+- Start with a CSV/JSON label export; printer-specific templates (ZPL, etc.) can be layered on top.
+- Provide an export entry point from the wire/harness UI and reuse the same data for BOM/wire lists.
+
+### Acceptance Criteria
+- Each tip can store an editable destination that persists with the document.
+- Wire/tip overviews expose both endpoint destinations.
+- Label export includes both endpoint destinations and wire metadata.
+- Selecting wires/tips can generate label data suitable for a label printer.
 
 ## Milestone 3: Open Bundle Segments / Duct Auto-Routing (Future)
 Goal: Support slotted wiring ducts and open channels where cables can enter, leave and branch at arbitrary points along a straight bundle segment.
@@ -270,6 +325,8 @@ Goal: Support slotted wiring ducts and open channels where cables can enter, lea
 ## Future Milestones (High-level)
 - **M2b**: Dedicated harness pattern and placement editor (patterns, per-segment order, slot editing, preview)
 - **M2C**: Ferrule library, data-driven wire sizes and color coding
+- **M2D**: Tool transactions and undo for live-edited tool sessions
+- **M2E**: Wire destination metadata and label-printer export
 - **M3**: Open bundle segments / duct auto-routing (closest-point attachment, shortest bridges, branch-offs)
 - **M4**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)
 - **M5**: Pathfinding/obstacle avoidance, properties (gauge/color), length, BOM, discrete cable lengths, wire loops, cable-clip placeholders, connector lengths, wire endpoint presets, stripped tips/ferrules, flat ribbon cable routing, foamboard manufacturing plans

@@ -1,17 +1,21 @@
 """Task panel for defining wire segments from point references."""
 
+import math
 import re
 
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
+from . import FerruleData
+from .WireColors import CABLE_COLORS
 from .WireBundle import (
     add_cable_to_harness,
     find_harness_for_segments,
     is_bundle_segment,
 )
 from .WireCable import (
+    WireCableProxy,
     create_wire_cable,
     ensure_support_objects,
     rename_cable,
@@ -34,7 +38,12 @@ class WireTaskPanel:
         self._pick_observer = None
         self._picking = None
         self._gate_active = False
+        self._syncing_selection = False
+        self._selection_observer = None
         self.cable = cable
+        self._build_cable = (
+            bool(getattr(cable, "BuildCable", True)) if cable is not None else True
+        )
 
         self.form = QtGui.QWidget()
         self.form.setWindowTitle("Edit Wire" if cable is not None else "Create Wire")
@@ -68,10 +77,12 @@ class WireTaskPanel:
         self.btn_remove = QtGui.QPushButton("Remove Segment")
         self.btn_up = QtGui.QPushButton("Move Up")
         self.btn_down = QtGui.QPushButton("Move Down")
+        self.btn_swap = QtGui.QPushButton("Swap Start/End")
         list_buttons.addWidget(self.btn_add)
         list_buttons.addWidget(self.btn_remove)
         list_buttons.addWidget(self.btn_up)
         list_buttons.addWidget(self.btn_down)
+        list_buttons.addWidget(self.btn_swap)
         layout.addLayout(list_buttons)
 
         detail_group = QtGui.QGroupBox("Selected Segment")
@@ -86,19 +97,56 @@ class WireTaskPanel:
 
         geometry_group = QtGui.QGroupBox("Geometry")
         geometry_layout = QtGui.QFormLayout(geometry_group)
+        self.wire_size_combo = QtGui.QComboBox()
+        self.wire_size_combo.addItem("Custom wire size", 0.0)
+        for entry in FerruleData.cross_sections():
+            self.wire_size_combo.addItem(
+                FerruleData.size_label(entry), entry["cross_section_mm2"]
+            )
+        geometry_layout.addRow("Wire size:", self.wire_size_combo)
+        self.cable_color_combo = QtGui.QComboBox()
+        self.cable_color_combo.setIconSize(QtCore.QSize(14, 14))
+        for number, german, name, color in CABLE_COLORS:
+            pixmap = QtGui.QPixmap(14, 14)
+            pixmap.fill(QtGui.QColor(color))
+            self.cable_color_combo.addItem(
+                QtGui.QIcon(pixmap), f"{number} {name}", name
+            )
+        blue_index = self.cable_color_combo.findData("Blue")
+        self.cable_color_combo.setCurrentIndex(blue_index if blue_index >= 0 else 0)
+        geometry_layout.addRow("Cable color:", self.cable_color_combo)
         self.diameter_spin = QtGui.QDoubleSpinBox()
         self.diameter_spin.setRange(0.1, 1000.0)
         self.diameter_spin.setDecimals(2)
         self.diameter_spin.setSingleStep(0.5)
         self.diameter_spin.setValue(4.0)
         self.diameter_spin.setSuffix(" mm")
+        self.derived_diameter_label = QtGui.QLabel("")
+        diameter_widget = QtGui.QWidget()
+        diameter_layout = QtGui.QHBoxLayout(diameter_widget)
+        diameter_layout.setContentsMargins(0, 0, 0, 0)
+        diameter_layout.addWidget(self.diameter_spin)
+        diameter_layout.addWidget(self.derived_diameter_label, 1)
         self.min_bend_spin = QtGui.QDoubleSpinBox()
         self.min_bend_spin.setRange(0.0, 100000.0)
         self.min_bend_spin.setDecimals(2)
         self.min_bend_spin.setSingleStep(1.0)
         self.min_bend_spin.setValue(12.0)
         self.min_bend_spin.setSuffix(" mm")
-        geometry_layout.addRow("Diameter:", self.diameter_spin)
+        geometry_layout.addRow("Diameter:", diameter_widget)
+        self.core_diameter_spin = QtGui.QDoubleSpinBox()
+        self.core_diameter_spin.setRange(0.01, 1000.0)
+        self.core_diameter_spin.setDecimals(2)
+        self.core_diameter_spin.setSingleStep(0.1)
+        self.core_diameter_spin.setValue(1.13)
+        self.core_diameter_spin.setSuffix(" mm")
+        self.core_diameter_label = QtGui.QLabel("")
+        core_widget = QtGui.QWidget()
+        core_layout = QtGui.QHBoxLayout(core_widget)
+        core_layout.setContentsMargins(0, 0, 0, 0)
+        core_layout.addWidget(self.core_diameter_spin)
+        core_layout.addWidget(self.core_diameter_label, 1)
+        geometry_layout.addRow("Core diameter:", core_widget)
         geometry_layout.addRow("Minimum bend radius:", self.min_bend_spin)
 
         geometry_buttons = QtGui.QHBoxLayout()
@@ -117,12 +165,22 @@ class WireTaskPanel:
         self.btn_remove.clicked.connect(self.remove_segment)
         self.btn_up.clicked.connect(self.move_up)
         self.btn_down.clicked.connect(self.move_down)
+        self.btn_swap.clicked.connect(self.swap_segment_ends)
         self.btn_pick_start.clicked.connect(lambda: self.pick_point("start"))
         self.btn_pick_end.clicked.connect(lambda: self.pick_point("end"))
         self.start_label.clicked.connect(lambda: self.select_point("start"))
         self.end_label.clicked.connect(lambda: self.select_point("end"))
         self.btn_create_path.clicked.connect(self.create_path)
         self.btn_create_cable.clicked.connect(self.create_cable)
+        self.wire_size_combo.currentIndexChanged.connect(self._on_wire_size_changed)
+        self.cable_color_combo.currentIndexChanged.connect(self._on_cable_color_changed)
+        self.diameter_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
+        self.core_diameter_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
+        self.min_bend_spin.valueChanged.connect(lambda _value: self._schedule_live_update())
+        self._live_timer = QtCore.QTimer(self.form)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(100)
+        self._live_timer.timeout.connect(self._live_update)
         self.segment_list.currentRowChanged.connect(self._update_detail)
         self.form.destroyed.connect(self._on_form_destroyed)
 
@@ -130,8 +188,13 @@ class WireTaskPanel:
         if self.cable is not None:
             self._load_cable()
         else:
+            self._on_wire_size_changed()
             self._update_list()
             self._update_detail()
+
+        self.segment_list.currentRowChanged.connect(self._on_list_row_changed)
+        self._selection_observer = PickObserver(self._on_scene_selection)
+        Gui.Selection.addObserver(self._selection_observer)
 
     def _update_button_labels(self):
         action = "Update" if self.cable is not None else "Create"
@@ -139,6 +202,7 @@ class WireTaskPanel:
         self.btn_create_cable.setText(f"{action} Cable")
 
     def _load_cable(self):
+        WireCableProxy._add_properties(self.cable)
         self.segments = []
         document = self.cable.Document
         points = list(self.cable.Points)
@@ -155,8 +219,19 @@ class WireTaskPanel:
                 }
             )
 
+        color = getattr(self.cable, "CableColor", "Blue")
+        color_index = self.cable_color_combo.findData(color)
+        self.cable_color_combo.setCurrentIndex(
+            color_index if color_index >= 0 else self.cable_color_combo.findData("Blue")
+        )
         self.diameter_spin.setValue(self.cable.Diameter.Value)
+        self.core_diameter_spin.setValue(self.cable.CoreDiameter.Value)
         self.min_bend_spin.setValue(self.cable.MinBendRadius.Value)
+        self._build_cable = bool(self.cable.BuildCable)
+        size = getattr(self.cable, "WireSizeMM2", 0.0)
+        index = self.wire_size_combo.findData(size)
+        self.wire_size_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._on_wire_size_changed()
         self.name_edit.setText(self.cable.Label)
 
         self._update_list()
@@ -164,6 +239,7 @@ class WireTaskPanel:
             self.segment_list.setCurrentRow(0)
         self._update_detail()
         self._show_cable_status()
+        self._live_timer.stop()
 
     @staticmethod
     def _label_with_button(label, button):
@@ -187,6 +263,7 @@ class WireTaskPanel:
         self.segments.append({"start": None, "end": None, "auto_field": None})
         self._update_list()
         self.segment_list.setCurrentRow(len(self.segments) - 1)
+        self._schedule_live_update()
 
     def remove_segment(self):
         row = self._current_row()
@@ -198,6 +275,7 @@ class WireTaskPanel:
             self.segment_list.setCurrentRow(min(row, len(self.segments) - 1))
         else:
             self._update_detail()
+        self._schedule_live_update()
 
     def move_up(self):
         row = self._current_row()
@@ -206,6 +284,7 @@ class WireTaskPanel:
         self.segments[row - 1], self.segments[row] = self.segments[row], self.segments[row - 1]
         self._update_list()
         self.segment_list.setCurrentRow(row - 1)
+        self._schedule_live_update()
 
     def move_down(self):
         row = self._current_row()
@@ -214,6 +293,35 @@ class WireTaskPanel:
         self.segments[row + 1], self.segments[row] = self.segments[row], self.segments[row + 1]
         self._update_list()
         self.segment_list.setCurrentRow(row + 1)
+        self._schedule_live_update()
+
+    def swap_segment_ends(self):
+        row = self._current_row()
+        if row is None:
+            return
+        segment = self.segments[row]
+        start_obj = self._resolve(segment["start"])
+        end_obj = self._resolve(segment["end"])
+        if is_bundle_segment(start_obj) and start_obj is end_obj:
+            endpoint = start_obj.End
+            if endpoint is not None:
+                document = start_obj.Document
+                segment["start"] = (document.Name, endpoint.Name)
+                segment["end"] = (document.Name, start_obj.Name)
+                segment["auto_field"] = "start"
+                self._update_list()
+                self.segment_list.setCurrentRow(row)
+                self._schedule_live_update()
+                return
+        segment["start"], segment["end"] = segment["end"], segment["start"]
+        auto_field = segment.get("auto_field")
+        if auto_field == "start":
+            segment["auto_field"] = "end"
+        elif auto_field == "end":
+            segment["auto_field"] = "start"
+        self._update_list()
+        self.segment_list.setCurrentRow(row)
+        self._schedule_live_update()
 
     def pick_point(self, field):
         row = self._current_row()
@@ -263,25 +371,30 @@ class WireTaskPanel:
             return
 
         entry = self.segments[row]
-        other_field = "end" if field == "start" else "start"
-        other_was_auto = entry.get("auto_field") == other_field
-        entry[field] = (document.Name, obj.Name)
-        if entry.get("auto_field") == field:
-            entry["auto_field"] = None
-
-        if is_bundle_segment(obj) and (
-            entry[other_field] is None or other_was_auto
-        ):
+        if is_bundle_segment(obj):
             endpoint = obj.End
-            if endpoint is not None:
-                entry[other_field] = (document.Name, endpoint.Name)
-                entry["auto_field"] = other_field
-                self.status_label.setStyleSheet("")
-                self.status_label.setText(
-                    "Bundle segment endpoints collected automatically."
-                )
+            entry["start"] = None
+            entry["end"] = None
+            entry["auto_field"] = None
+            if field == "start":
+                entry["start"] = (document.Name, obj.Name)
+                if endpoint is not None:
+                    entry["end"] = (document.Name, endpoint.Name)
+                    entry["auto_field"] = "end"
+            else:
+                entry["end"] = (document.Name, obj.Name)
+                if endpoint is not None:
+                    entry["start"] = (document.Name, endpoint.Name)
+                    entry["auto_field"] = "start"
+            self.status_label.setStyleSheet("")
+            self.status_label.setText("Bundle segment endpoints set.")
+        else:
+            entry[field] = (document.Name, obj.Name)
+            if entry.get("auto_field") == field:
+                entry["auto_field"] = None
         self._update_list()
         self.segment_list.setCurrentRow(row)
+        self._schedule_live_update()
 
     def _stop_picking(self):
         if self._pick_observer is not None:
@@ -305,6 +418,80 @@ class WireTaskPanel:
 
     def _on_form_destroyed(self, *args):
         self._stop_picking()
+        self._remove_selection_observer()
+
+    def _remove_selection_observer(self):
+        if self._selection_observer is not None:
+            try:
+                Gui.Selection.removeObserver(self._selection_observer)
+            except Exception:
+                pass
+            self._selection_observer = None
+
+    def _row_scene_objects(self, row):
+        objects = []
+        segment = self.segments[row]
+        for field in ("start", "end"):
+            obj = self._resolve(segment[field])
+            if obj is not None and obj not in objects:
+                objects.append(obj)
+        bundles = [obj for obj in objects if is_bundle_segment(obj)]
+        return bundles if bundles else objects
+
+    def _on_list_row_changed(self, _row):
+        if self._syncing_selection or self._picking is not None:
+            return
+        row = self._current_row()
+        if row is None:
+            return
+        objects = self._row_scene_objects(row)
+        if not objects:
+            return
+        self._syncing_selection = True
+        try:
+            Gui.Selection.clearSelection()
+            for obj in objects:
+                Gui.Selection.addSelection(obj)
+        finally:
+            self._syncing_selection = False
+
+    def _on_scene_selection(self, doc_name, obj_name, subelement):
+        if self._syncing_selection or self._picking is not None:
+            return
+        if isinstance(doc_name, str):
+            document = App.getDocument(doc_name)
+        else:
+            document = doc_name
+        if document is None:
+            return
+        selected = (
+            document.getObject(obj_name)
+            if isinstance(obj_name, str)
+            else obj_name
+        )
+        if selected is None or not is_bundle_segment(selected):
+            return
+
+        matches = []
+        for row, segment in enumerate(self.segments):
+            if (
+                self._resolve(segment["start"]) is selected
+                or self._resolve(segment["end"]) is selected
+            ):
+                matches.append(row)
+        if not matches:
+            return
+
+        current = self.segment_list.currentRow()
+        row = current if current in matches else matches[0]
+        self._syncing_selection = True
+        try:
+            self.segment_list.setCurrentRow(row)
+            item = self.segment_list.item(row)
+            if item is not None:
+                self.segment_list.scrollToItem(item)
+        finally:
+            self._syncing_selection = False
 
     def _current_row(self):
         row = self.segment_list.currentRow()
@@ -333,6 +520,162 @@ class WireTaskPanel:
             return f"{obj.Label} ({start} -> {end})"
         point = obj.getGlobalPlacement().Base
         return f"{obj.Label} ({point.x:.2f}, {point.y:.2f}, {point.z:.2f})"
+
+    def _on_wire_size_changed(self, *args):
+        data = self.wire_size_combo.currentData()
+        entry = FerruleData.cross_section_for_size(data) if data else None
+        if entry is not None:
+            self.diameter_spin.setValue(entry["cable_diameter_mm"])
+            self.diameter_spin.setVisible(False)
+            self.derived_diameter_label.setText(
+                f"{entry['cable_diameter_mm']:.2f} mm "
+                "(from sleeve d2 - 1 mm)"
+            )
+            self.derived_diameter_label.setVisible(True)
+            core_diameter = 2.0 * math.sqrt(
+                entry["cross_section_mm2"] / math.pi
+            )
+            self.core_diameter_spin.setValue(core_diameter)
+            self.core_diameter_spin.setVisible(False)
+            self.core_diameter_label.setText(
+                f"{core_diameter:.2f} mm "
+                f"(from {entry['cross_section_mm2']:g} mm²)"
+            )
+            self.core_diameter_label.setVisible(True)
+        else:
+            self.diameter_spin.setVisible(True)
+            self.derived_diameter_label.setVisible(False)
+            self.core_diameter_spin.setVisible(True)
+            self.core_diameter_label.setVisible(False)
+        self._schedule_live_update()
+
+    def _on_cable_color_changed(self, *args):
+        if self.cable is not None and self.cable.isValid():
+            self.cable.CableColor = self._selected_cable_color()
+
+    def _selected_cable_color(self):
+        value = self.cable_color_combo.currentData()
+        return value if value else "Blue"
+
+    def _schedule_live_update(self):
+        if self.cable is not None:
+            if self._cable_is_usable(self.cable.Document):
+                self._live_timer.start()
+        elif len(self.segments) > 1:
+            self._live_timer.start()
+
+    def _live_update(self):
+        if self.cable is None and len(self.segments) <= 1:
+            self.status_label.setStyleSheet("")
+            self.status_label.setText("")
+            return
+
+        document = self._target_document()
+        links, error = self._collect_valid_prefix(document)
+        if error is not None:
+            self._update_incomplete_preview(document, links, error)
+            return
+        self._generate(make_cable=self._build_cable, live=True)
+
+    def _collect_valid_prefix(self, document):
+        if not self.segments:
+            return [], "Add at least one segment first."
+
+        links = []
+        for index, segment in enumerate(self.segments):
+            start_obj = self._resolve(segment["start"])
+            end_obj = self._resolve(segment["end"])
+            if start_obj is None:
+                return links, f"Segment {index + 1} needs a start reference."
+            if end_obj is None:
+                return links, f"Segment {index + 1} needs an end reference."
+            if (
+                start_obj.Document is not document
+                or end_obj.Document is not document
+            ):
+                return (
+                    links,
+                    "All references must belong to the same document as the cable.",
+                )
+            if not is_bundle_segment(start_obj) and not is_bundle_segment(end_obj):
+                start = start_obj.getGlobalPlacement().Base
+                end = end_obj.getGlobalPlacement().Base
+                if (end - start).Length < 1e-9:
+                    return (
+                        links,
+                        f"Segment {index + 1} has identical start and end points.",
+                    )
+            links.extend([start_obj, end_obj])
+        return links, None
+
+    def _apply_cable_parameters(self, cable):
+        diameter = self.diameter_spin.value()
+        min_bend_radius = self.min_bend_spin.value()
+        wire_size_data = self.wire_size_combo.currentData()
+        wire_size_mm2 = float(wire_size_data) if wire_size_data else 0.0
+        cable.Diameter = diameter
+        cable.MinBendRadius = min_bend_radius
+        cable.WireSizeMM2 = wire_size_mm2
+        cable.CableColor = self._selected_cable_color()
+        if wire_size_mm2 > 0.0:
+            cable.CoreSizeMode = "Area"
+            cable.CoreArea = wire_size_mm2
+            cable.CoreDiameter = 2.0 * math.sqrt(wire_size_mm2 / math.pi)
+        else:
+            core_diameter = self.core_diameter_spin.value()
+            cable.CoreSizeMode = "Diameter"
+            cable.CoreDiameter = core_diameter
+            cable.CoreArea = math.pi * (core_diameter / 2.0) ** 2
+
+    def _update_incomplete_preview(self, document, links, message):
+        if self.cable is None and (len(self.segments) <= 1 or not links):
+            self.status_label.setStyleSheet("color: #d08000;")
+            self.status_label.setText(f"Segment definition incomplete: {message}")
+            return
+
+        try:
+            if self._cable_is_usable(document):
+                ensure_support_objects(self.cable)
+                self.cable.Points = links
+                update_cable_dependencies(self.cable)
+                self._apply_cable_parameters(self.cable)
+                self.cable.BuildCable = self._build_cable
+                self.cable.Preview = True
+            else:
+                name_text = self.name_edit.text().strip()
+                preview_name = name_text or self._auto_wire_name(links)
+                safe_name = self._safe_object_name(preview_name)
+                container = document.addObject(
+                    "App::DocumentObjectGroup", safe_name + "_Group"
+                )
+                self.cable = create_wire_cable(
+                    document,
+                    links,
+                    diameter=self.diameter_spin.value(),
+                    min_bend_radius=self.min_bend_spin.value(),
+                    container=container,
+                    build_cable=self._build_cable,
+                    name=safe_name,
+                    label=preview_name,
+                )
+                self._apply_cable_parameters(self.cable)
+                self.cable.Preview = True
+                rename_cable(self.cable, preview_name)
+
+            harness = find_harness_for_segments(links) if links else None
+            if harness is not None:
+                add_cable_to_harness(harness, self.cable)
+            else:
+                self.cable.Harness = None
+            document.recompute()
+            self._update_button_labels()
+        except Exception as error:
+            self.status_label.setStyleSheet("color: #b00000;")
+            self.status_label.setText(str(error))
+            return
+
+        self.status_label.setStyleSheet("color: #d08000;")
+        self.status_label.setText(f"Segment definition incomplete: {message}")
 
     def _update_list(self):
         current = self.segment_list.currentRow()
@@ -398,6 +741,7 @@ class WireTaskPanel:
         self.btn_remove.setEnabled(has_segment)
         self.btn_up.setEnabled(has_segment and row > 0)
         self.btn_down.setEnabled(has_segment and row < len(self.segments) - 1)
+        self.btn_swap.setEnabled(has_segment)
 
         if not has_segment:
             self._update_point_label(self.start_label, None)
@@ -503,19 +847,26 @@ class WireTaskPanel:
             return False
 
     def create_path(self):
+        self._build_cable = False
         self._generate(make_cable=False)
 
     def create_cable(self):
+        self._build_cable = True
         self._generate(make_cable=True)
 
-    def _generate(self, make_cable):
+    def _generate(self, make_cable, live=False):
         self._stop_picking()
+        self._build_cable = make_cable
         document = self._target_document()
 
         try:
             _, links = self._collect_segments(document)
         except ValueError as error:
-            QtGui.QMessageBox.warning(self.form, "WirePlugin", str(error))
+            if live:
+                self.status_label.setStyleSheet("color: #b00000;")
+                self.status_label.setText(str(error))
+            else:
+                QtGui.QMessageBox.warning(self.form, "WirePlugin", str(error))
             return
 
         diameter = self.diameter_spin.value()
@@ -531,9 +882,9 @@ class WireTaskPanel:
                 ensure_support_objects(self.cable)
                 self.cable.Points = links
                 update_cable_dependencies(self.cable)
-                self.cable.Diameter = diameter
-                self.cable.MinBendRadius = min_bend_radius
+                self._apply_cable_parameters(self.cable)
                 self.cable.BuildCable = make_cable
+                self.cable.Preview = False
                 rename_cable(self.cable, wire_name)
             else:
                 self.cable = None
@@ -550,9 +901,15 @@ class WireTaskPanel:
                     name=safe_name,
                     label=wire_name,
                 )
+                self._apply_cable_parameters(self.cable)
+                self.cable.Preview = False
                 rename_cable(self.cable, wire_name)
         except Exception as error:
-            QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
+            if live:
+                self.status_label.setStyleSheet("color: #b00000;")
+                self.status_label.setText(str(error))
+            else:
+                QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
             return
 
         if harness is not None:
@@ -580,8 +937,10 @@ class WireTaskPanel:
 
     def reject(self):
         self._stop_picking()
+        self._remove_selection_observer()
         Gui.Control.closeDialog()
 
     def accept(self):
         self._stop_picking()
+        self._remove_selection_observer()
         Gui.Control.closeDialog()

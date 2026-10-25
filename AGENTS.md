@@ -49,28 +49,39 @@ The module provides a `WireCreator` class with these main operations:
 ### Cable Object
 - `WireCable.py` defines a persistent `Part::FeaturePython` cable object
 - `Points` (`App::PropertyLinkListGlobal`) stores ordered start/end node references; nodes can be point references (coordinate systems, Std_Part origins, Parts/Bodies) or `WireBundleSegment` objects. Use the global list type so references inside `App::Part` scopes do not trigger warnings
-- A bundle segment in a start slot contributes its normal run (`Start` -> `End`); in an end slot it contributes its reversed run (`End` -> `Start`). Picking a bundle segment into an empty slot auto-fills the other node from the segment's `End` reference. `WireCable.execute()` expands each pair into route pieces before calling `WireCreator`
+- A bundle segment in a start slot contributes its normal run (`Start` -> `End`); in an end slot it contributes its reversed run (`End` -> `Start`). Picking a bundle segment clears both fields first, then sets the clicked slot to the segment and the other slot to the segment's opposite endpoint; this redefines the whole segment instead of leaving stale references. `WireCable.execute()` expands each pair into route pieces before calling `WireCreator`
 - `Label` is the user-facing wire name; empty names are auto-generated as `wire_<start>_<end>` from the first start and last end reference labels. The owning group label is `<name> Group`
 - `Harness` (`App::PropertyLinkGlobal`) points to the harness that computes this cable's lane offsets
-- `Diameter`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` are stored as properties
+- `Diameter`, `WireSizeMM2`, `CoreSizeMode`, `CoreArea`, `CoreDiameter`, `MinBendRadius`, `Length`, `CableOnlyLength`, `MinimumRadius`, `Status` and `Preview` are stored as properties
+- `WireSizeMM2` is 0 for custom wire sizes; standard sizes enforce the matching core area and derive the cable diameter from the ferrule sleeve (`d2 - 1 mm`)
+- `CableColor` is a cable-level `App::PropertyEnumeration` (independent of ferrule sleeve color); `apply_cable_color()` maps it to the cable's `ShapeColor`
+- Cable color choices are the single-color DIN 47100 entries (CSV numbers 1-10); the tool shows them as `number + English name`
 - Core size is wire-level and shared by both tips; the tip panel edits the cable through `InList` without adding a tip→cable link
 - `StartTip`/`EndTip` link to per-end `WireTip` settings objects; tip `LengthOffset` shortens the visible geometry, while `Length` remains the total and `CableOnlyLength` is the shortened value
 - Cable changes to `Points`, `Diameter` or `Harness` touch the harness so the lane layout is recalculated upstream
+- Cable-tool edits (segments, wire size, diameter, core, bend radius) live-update after a short debounce; with more than one segment the tool auto-creates the cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only) and show an orange status message
+- The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle/point references
 - `execute()` rebuilds path and cable geometry from the linked coordinate-system placements
 - Linked objects create dependencies, so a document recompute updates moved inputs
 - Double-click opens `WireTaskPanel` prefilled with the stored route; edits update the same object
-- Path and bad-arc helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`
+- Path, bad-arc, core and ferrule helper objects are linked from `PathObject`, `BadRadiusObject`, `BadLengthObject`, `StartCoreObject`/`EndCoreObject` and `StartFerruleMetal`/`EndFerruleMetal`/`StartFerruleSleeve`/`EndFerruleSleeve`
 - `Dependencies` (`App::PropertyLinkListGlobal`) stores ancestor GeoFeatureGroups of the point references so moving an enclosing `App::Part`/Body recomputes the cable
 - Do not store a link back to the owning group: a group property on the cable creates a `Wire`/`WireCable` dependency cycle. Find the group through `InList` instead.
 
 ### Cable Tip Object
-- `WireTip.py` defines `WireTip` (`App::FeaturePython`) with `TipType` (`Length offset`/`Stripped wire`), `LengthOffset`, `StrippedLength` and `End` (`Start`/`End`)
+- `WireTip.py` defines `WireTip` (`App::FeaturePython`) with `TipType` (`Length offset`/`Stripped wire`/`Ferrule`), `LengthOffset`, `StrippedLength`, `FerruleType`, `FerruleVariant`, `FerruleColorSystem` and `End` (`Start`/`End`)
 - Tips are created in the owning cable group and linked from the cable through `StartTip`/`EndTip`
 - Tips do not link back to the cable; they find it through `InList`
 - Double-click a tip to open `WireTipTaskPanel`; core size lives on the cable and applies to both tips. Ferrule and expanded conductor presets can be added there later
 - Cable geometry is trimmed from the route ends by the tip settings; `Length` remains full and `CableOnlyLength` subtracts only connector-style length offsets (stripped conductor keeps the cable length)
 - `LengthOffset`/`StrippedLength` are capped to just below the first/last route-piece length (`StartTipLength`/`EndTipLength` minus `TIP_OFFSET_MARGIN` = 0.01 mm); the tip panel applies changes live and restores the previous values on cancel
 - Stripped-wire tips set the outer cable back by `StrippedLength`; `StartCoreObject`/`EndCoreObject` display copper-colored core cylinders along the end pieces, clamped to the cable diameter
+- Ferrule tips use the selected JSON variant: the cable builds a hollow metallic tip, a colored plastic cone and sleeve, and the exposed core over `L2 + cone`. Sleeve color comes from the selected DIN/T/W code. Ferrule `L1` is validated against the tip-segment length and flagged in the tip panel when too long.
+- Clicking a core/ferrule helper selects its owning `WireTip` via the global `WireSelection` observer, so the tip can be opened from the tree. The clicked helper is temporarily recolored green for highlighting but is not selected, so hidden helper rows cannot pop into the tree; appearance is restored when the selection changes.
+- Toggling a tip's eye icon syncs visibility of its core/ferrule helper geometry; toggle it in the ViewProvider `onChanged`/`attach` handler.
+- Tip view providers add an empty Coin display mode and set `DefaultMode=0` so FreeCAD treats the no-shape tip as showable; otherwise the tree eye icon stays grey even when `Visibility` is true.
+- Locate the tip's mode switch through `ViewObject.RootNode` (find the child `SoSwitch`); after a view-provider proxy reload, `ViewObject.SwitchNode` can raise `No SWIG wrapped library loaded`.
+- `listDisplayModes()` is a shared mode-name registry, so check the actual mode-switch child count before adding the tip's `Default` display mode.
 
 ### Harness Object
 - `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and a computed `Layout` map
@@ -156,6 +167,10 @@ Segment start/end points can be defined in global coordinates or relative to a P
 - `freecad/WirePlugin/WireBundleTaskPanel.py` - harness segment/gap/pattern editor
 - `freecad/WirePlugin/WireTip.py` - per-end cable tip settings object
 - `freecad/WirePlugin/WireTipTaskPanel.py` - cable tip settings editor
+- `freecad/WirePlugin/FerruleData.py` - JSON ferrule library loader and helpers
+- `freecad/WirePlugin/WireSelection.py` - remaps core/ferrule helper selection to the owning tip
+- `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` - ferrule library
+- `tools/csv_to_ferrules_json.py` - example CSV-to-JSON converter
 - `freecad/WirePlugin/PointReference.py` - shared point-reference pick helpers
 - `snippet_archive/poc_biarc_sweep.py` - original PoC demonstration
 - `snippet_archive/test_wirecreator.py` - archived test suite with predefined segment sets

@@ -7,6 +7,8 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 
+from . import FerruleData
+from .WireColors import color_rgb, names as cable_color_names
 from .WireBundle import (
     ancestor_groups,
     is_bundle_segment,
@@ -17,6 +19,18 @@ from .WireCreator import Segment, WireCreator
 from .WireTip import TIP_OFFSET_MARGIN, create_wire_tip
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
+
+SUPPORT_OBJECT_PROPERTIES = (
+    "PathObject",
+    "BadRadiusObject",
+    "BadLengthObject",
+    "StartCoreObject",
+    "EndCoreObject",
+    "StartFerruleMetal",
+    "EndFerruleMetal",
+    "StartFerruleSleeve",
+    "EndFerruleSleeve",
+)
 
 
 class WireCableProxy:
@@ -78,6 +92,14 @@ class WireCableProxy:
             )
             area = max(0.0, getattr(obj, "CoreArea", 1.0))
             obj.CoreDiameter = 2.0 * math.sqrt(area / math.pi)
+        if "WireSizeMM2" not in properties:
+            obj.addProperty(
+                "App::PropertyFloat",
+                "WireSizeMM2",
+                "Wire",
+                "Selected standard wire size in square millimetres (0 = custom)",
+            )
+            obj.WireSizeMM2 = 0.0
         if "MinBendRadius" not in properties:
             obj.addProperty(
                 "App::PropertyLength",
@@ -86,6 +108,27 @@ class WireCableProxy:
                 "Minimum allowed bending radius",
             )
             obj.MinBendRadius = 12.0
+        if "CableColor" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "CableColor",
+                "Wire",
+                "Wire insulation color",
+            )
+            obj.CableColor = list(cable_color_names())
+            obj.CableColor = "Blue"
+        else:
+            current = getattr(obj, "CableColor", "Blue")
+            try:
+                obj.CableColor = list(cable_color_names())
+            except Exception:
+                pass
+            if current not in cable_color_names():
+                current = "Blue"
+            try:
+                obj.CableColor = current
+            except Exception:
+                pass
         if "BuildCable" not in properties:
             obj.addProperty(
                 "App::PropertyBool",
@@ -94,6 +137,14 @@ class WireCableProxy:
                 "Create the swept cable solid (otherwise only the path is built)",
             )
             obj.BuildCable = True
+        if "Preview" not in properties:
+            obj.addProperty(
+                "App::PropertyBool",
+                "Preview",
+                "Wire",
+                "Preview mode: build the path but no cable/core/ferrule geometry",
+            )
+            obj.Preview = False
         for name, description in (
             ("StartTip", "Settings object for the cable start end"),
             ("EndTip", "Settings object for the cable end"),
@@ -155,6 +206,10 @@ class WireCableProxy:
             ("BadLengthObject", "Object displaying bi-arcs over the length limit"),
             ("StartCoreObject", "Object displaying the stripped core at the start"),
             ("EndCoreObject", "Object displaying the stripped core at the end"),
+            ("StartFerruleMetal", "Metal tip at the start ferrule"),
+            ("EndFerruleMetal", "Metal tip at the end ferrule"),
+            ("StartFerruleSleeve", "Colored sleeve/cone at the start ferrule"),
+            ("EndFerruleSleeve", "Colored sleeve/cone at the end ferrule"),
         ):
             if name not in properties:
                 obj.addProperty("App::PropertyLink", name, "Wire", description)
@@ -266,7 +321,8 @@ class WireCableProxy:
         if _is_valid(path_obj, obj.Document):
             _set_shape(path_obj, geometry_wire)
 
-        if obj.BuildCable:
+        show_solid = obj.BuildCable and not getattr(obj, "Preview", False)
+        if show_solid:
             cable = geometry_creator.make_cable(
                 geometry_wire, diameter=obj.Diameter.Value
             )
@@ -281,6 +337,27 @@ class WireCableProxy:
         for property_name, shape in (
             ("StartCoreObject", start_core_shape),
             ("EndCoreObject", end_core_shape),
+        ):
+            link = getattr(obj, property_name, None)
+            if _is_valid(link, obj.Document):
+                _set_shape(link, shape)
+
+        start_metal = Part.Shape()
+        start_sleeve = Part.Shape()
+        end_metal = Part.Shape()
+        end_sleeve = Part.Shape()
+        if show_solid:
+            start_metal, start_sleeve = self._ferrule_shapes(
+                obj, getattr(obj, "StartTip", None), segments[0], True
+            )
+            end_metal, end_sleeve = self._ferrule_shapes(
+                obj, getattr(obj, "EndTip", None), segments[-1], False
+            )
+        for property_name, shape in (
+            ("StartFerruleMetal", start_metal),
+            ("EndFerruleMetal", end_metal),
+            ("StartFerruleSleeve", start_sleeve),
+            ("EndFerruleSleeve", end_sleeve),
         ):
             link = getattr(obj, property_name, None)
             if _is_valid(link, obj.Document):
@@ -347,7 +424,22 @@ class WireCableProxy:
         limit = max(0.0, maximum_length - TIP_OFFSET_MARGIN)
         tip_type = getattr(tip, "TipType", "Length offset")
         try:
-            if tip_type == "Stripped wire":
+            if tip_type == "Ferrule":
+                variant_data = cls._ferrule_variant(cable, tip)
+                if variant_data is not None:
+                    settings["trim"] = min(
+                        FerruleData.strip_length(variant_data), limit
+                    )
+                    settings["strip"] = True
+                    settings["core_diameter"] = cls._core_diameter(
+                        cable, cable.Diameter.Value
+                    )
+                else:
+                    settings["trim"] = min(
+                        max(0.0, tip.LengthOffset.Value), limit
+                    )
+                    settings["connector"] = settings["trim"]
+            elif tip_type == "Stripped wire":
                 settings["trim"] = min(
                     max(0.0, tip.StrippedLength.Value), limit
                 )
@@ -363,6 +455,147 @@ class WireCableProxy:
         except Exception:
             pass
         return settings
+
+    @staticmethod
+    def _ferrule_info(cable, tip):
+        entry = FerruleData.cross_section_for_size(
+            getattr(cable, "WireSizeMM2", 0.0)
+        )
+        if entry is None:
+            return None
+        type_entry = FerruleData.ferrule_type(
+            entry, getattr(tip, "FerruleType", "tube")
+        )
+        if type_entry is None:
+            return None
+        variant_data = FerruleData.variant(
+            type_entry, getattr(tip, "FerruleVariant", 0)
+        )
+        if variant_data is None:
+            return None
+        return entry, type_entry, variant_data
+
+    @staticmethod
+    def _ferrule_variant(cable, tip):
+        info = WireCableProxy._ferrule_info(cable, tip)
+        return info[2] if info is not None else None
+
+    def _ferrule_shapes(self, cable, tip, segment, at_start):
+        if not _is_valid(tip, cable.Document):
+            return Part.Shape(), Part.Shape()
+        if getattr(tip, "TipType", "Length offset") != "Ferrule":
+            return Part.Shape(), Part.Shape()
+        info = self._ferrule_info(cable, tip)
+        if info is None:
+            return Part.Shape(), Part.Shape()
+        entry, _, variant_data = info
+        metal, sleeve = self._make_ferrule_meshes(
+            variant_data, segment, at_start
+        )
+        if not sleeve.isNull():
+            info_color, _ = FerruleData.color_for_system(
+                entry, getattr(tip, "FerruleColorSystem", "DIN")
+            )
+            rgb = (
+                FerruleData.hex_to_rgb(info_color.get("hex"))
+                if info_color is not None
+                else None
+            )
+            if rgb is not None:
+                sleeve_link = getattr(
+                    cable,
+                    "StartFerruleSleeve" if at_start else "EndFerruleSleeve",
+                    None,
+                )
+                if _is_valid(sleeve_link, cable.Document):
+                    try:
+                        sleeve_link.ViewObject.ShapeColor = rgb
+                        sleeve_link.ViewObject.Transparency = 0
+                    except Exception:
+                        pass
+        return metal, sleeve
+
+    @staticmethod
+    def _make_ferrule_meshes(variant_data, segment, at_start):
+        direction = (
+            segment.end - segment.start
+            if at_start
+            else segment.start - segment.end
+        )
+        length = direction.Length
+        if length < 1e-9:
+            return Part.Shape(), Part.Shape()
+        axis = direction / length
+        base = segment.start if at_start else segment.end
+
+        l1 = variant_data["l1_mm"]
+        l2 = variant_data["l2_mm"]
+        d1 = variant_data["d1_mm"]
+        s1 = variant_data["s1_mm"]
+        d2 = variant_data["d2_mm"]
+        s2 = variant_data["s2_mm"]
+        if min(l1, l2, d1, d2, s1, s2) <= 0.0:
+            return Part.Shape(), Part.Shape()
+
+        metal_outer = d1 + 2.0 * s1
+        sleeve_outer = d2 + 2.0 * s2
+        cone_length = max(0.0, (sleeve_outer - metal_outer) / 2.0)
+        sleeve_length = max(0.0, l1 - l2 - cone_length)
+
+        metal = Part.Shape()
+        if l2 > 1e-9:
+            outer = Part.makeCylinder(metal_outer / 2.0, l2, base, axis)
+            inner = Part.makeCylinder(d1 / 2.0, l2, base, axis)
+            metal = outer.cut(inner)
+
+        outer_parts = []
+        inner_parts = []
+        cone_start = base + axis * l2
+        sleeve_start = cone_start + axis * cone_length
+        if cone_length > 1e-9:
+            outer_parts.append(
+                Part.makeCone(
+                    metal_outer / 2.0,
+                    sleeve_outer / 2.0,
+                    cone_length,
+                    cone_start,
+                    axis,
+                )
+            )
+            inner_parts.append(
+                Part.makeCone(
+                    d1 / 2.0,
+                    d2 / 2.0,
+                    cone_length,
+                    cone_start,
+                    axis,
+                )
+            )
+        if sleeve_length > 1e-9:
+            outer_parts.append(
+                Part.makeCylinder(
+                    sleeve_outer / 2.0, sleeve_length, sleeve_start, axis
+                )
+            )
+            inner_parts.append(
+                Part.makeCylinder(
+                    d2 / 2.0, sleeve_length, sleeve_start, axis
+                )
+            )
+
+        if not outer_parts:
+            return metal, Part.Shape()
+        outer_sleeve = outer_parts[0]
+        for part in outer_parts[1:]:
+            outer_sleeve = outer_sleeve.fuse(part)
+        if inner_parts:
+            inner_sleeve = inner_parts[0]
+            for part in inner_parts[1:]:
+                inner_sleeve = inner_sleeve.fuse(part)
+            sleeve = outer_sleeve.cut(inner_sleeve)
+        else:
+            sleeve = outer_sleeve
+        return metal, sleeve
 
     @staticmethod
     def _make_core(segment, settings, at_start):
@@ -491,6 +724,10 @@ class WireCableProxy:
             obj.BadLengthObject,
             getattr(obj, "StartCoreObject", None),
             getattr(obj, "EndCoreObject", None),
+            getattr(obj, "StartFerruleMetal", None),
+            getattr(obj, "EndFerruleMetal", None),
+            getattr(obj, "StartFerruleSleeve", None),
+            getattr(obj, "EndFerruleSleeve", None),
         ):
             if _is_valid(link, obj.Document):
                 _set_shape(link, Part.Shape())
@@ -512,10 +749,13 @@ class WireCableProxy:
         self._add_properties(obj)
         update_cable_dependencies(obj)
         _remove_legacy_container(obj)
+        hide_support_objects(obj)
 
     def onChanged(self, obj, prop):
         if prop == "Points":
             update_cable_dependencies(obj)
+        if prop == "CableColor":
+            apply_cable_color(obj)
         if prop in ("Points", "Diameter", "Harness"):
             self._touch_harness(obj)
 
@@ -541,6 +781,7 @@ class ViewProviderWireCable:
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        apply_cable_color(vobj.Object)
 
     def setEdit(self, vobj, mode):
         if mode != 0:
@@ -594,6 +835,10 @@ class ViewProviderWireCable:
                 obj.BadLengthObject,
                 getattr(obj, "StartCoreObject", None),
                 getattr(obj, "EndCoreObject", None),
+                getattr(obj, "StartFerruleMetal", None),
+                getattr(obj, "EndFerruleMetal", None),
+                getattr(obj, "StartFerruleSleeve", None),
+                getattr(obj, "EndFerruleSleeve", None),
                 getattr(obj, "StartTip", None),
                 getattr(obj, "EndTip", None),
             )
@@ -776,8 +1021,6 @@ def ensure_support_objects(cable):
         obj = document.addObject(type_id, name)
         obj.Label = label
         setattr(cable, property_name, obj)
-        if container is not None:
-            container.addObject(obj)
         return obj
 
     path_obj = ensure("PathObject", "Part::Feature", "WirePath", "Wire Path")
@@ -791,6 +1034,30 @@ def ensure_support_objects(cable):
         "StartCoreObject", "Part::Feature", "WireStartCore", "Start Core"
     )
     end_core = ensure("EndCoreObject", "Part::Feature", "WireEndCore", "End Core")
+    start_ferrule_metal = ensure(
+        "StartFerruleMetal",
+        "Part::Feature",
+        "WireStartFerruleMetal",
+        "Start Ferrule Metal",
+    )
+    end_ferrule_metal = ensure(
+        "EndFerruleMetal",
+        "Part::Feature",
+        "WireEndFerruleMetal",
+        "End Ferrule Metal",
+    )
+    start_ferrule_sleeve = ensure(
+        "StartFerruleSleeve",
+        "Part::Feature",
+        "WireStartFerruleSleeve",
+        "Start Ferrule Sleeve",
+    )
+    end_ferrule_sleeve = ensure(
+        "EndFerruleSleeve",
+        "Part::Feature",
+        "WireEndFerruleSleeve",
+        "End Ferrule Sleeve",
+    )
 
     def ensure_tip(property_name, end, name, label):
         tip = getattr(cable, property_name)
@@ -822,11 +1089,27 @@ def ensure_support_objects(cable):
         bad_length.ViewObject.Transparency = 0
     except Exception:
         pass
+    hide_support_objects(cable)
+
     try:
         start_core.ViewObject.ShapeColor = (0.8, 0.45, 0.2)
         start_core.ViewObject.Transparency = 0
         end_core.ViewObject.ShapeColor = (0.8, 0.45, 0.2)
         end_core.ViewObject.Transparency = 0
+    except Exception:
+        pass
+    try:
+        for obj in (
+            start_ferrule_metal,
+            end_ferrule_metal,
+        ):
+            obj.ViewObject.ShapeColor = (0.75, 0.75, 0.78)
+            obj.ViewObject.Transparency = 0
+        for obj in (
+            start_ferrule_sleeve,
+            end_ferrule_sleeve,
+        ):
+            obj.ViewObject.Transparency = 0
     except Exception:
         pass
 
@@ -852,6 +1135,38 @@ def rename_cable(cable, label):
             core.Label = f"{label} {end} Core"
 
 
+def hide_support_objects(cable):
+    """Keep only the cable and its tips visible in the tree view."""
+    document = cable.Document
+    helpers = []
+    for property_name in SUPPORT_OBJECT_PROPERTIES:
+        obj = getattr(cable, property_name, None)
+        if _is_valid(obj, document):
+            helpers.append(obj)
+            try:
+                obj.ViewObject.ShowInTree = False
+            except Exception:
+                pass
+
+    container = find_container(cable)
+    if _is_valid(container, document):
+        children = [child for child in container.Group if child not in helpers]
+        if len(children) != len(container.Group):
+            container.Group = children
+
+
+def apply_cable_color(cable):
+    """Apply the cable's insulation color to the 3D view."""
+    rgb = color_rgb(getattr(cable, "CableColor", "Blue"))
+    if rgb is None:
+        return
+    try:
+        cable.ViewObject.ShapeColor = rgb
+        cable.ViewObject.Transparency = 20
+    except Exception:
+        pass
+
+
 def create_wire_cable(
     document,
     points,
@@ -869,11 +1184,7 @@ def create_wire_cable(
 
     if App.GuiUp:
         ViewProviderWireCable(cable.ViewObject)
-        try:
-            cable.ViewObject.ShapeColor = (0.2, 0.45, 0.8)
-            cable.ViewObject.Transparency = 20
-        except Exception:
-            pass
+        apply_cable_color(cable)
 
     cable.Points = list(points)
     update_cable_dependencies(cable)

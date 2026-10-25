@@ -3,6 +3,10 @@ import os
 
 import FreeCADGui
 
+from . import WireSelection
+
+WireSelection.install()
+
 ICON_DIR = os.path.join(os.path.dirname(__file__), "Resources", "Icons")
 
 
