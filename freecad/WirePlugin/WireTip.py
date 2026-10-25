@@ -119,11 +119,28 @@ class ViewProviderWireTip:
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        self._ensure_transparency_property(vobj)
         self._setup_display_mode(vobj)
         self._sync_visibility_mode(vobj)
         self._sync_geometry_visibility(vobj)
+        self._sync_geometry_transparency(vobj)
         try:
             vobj.signalChangeIcon()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _ensure_transparency_property(vobj):
+        if "Transparency" in vobj.PropertiesList:
+            return
+        try:
+            vobj.addProperty(
+                "App::PropertyPercent",
+                "Transparency",
+                "Tip",
+                "Transparency of the tip geometry",
+            )
+            vobj.Transparency = 0
         except Exception:
             pass
 
@@ -171,6 +188,8 @@ class ViewProviderWireTip:
                 vobj.signalChangeIcon()
             except Exception:
                 pass
+        elif prop == "Transparency":
+            self._sync_geometry_transparency(vobj)
 
     @staticmethod
     def _sync_visibility_mode(vobj):
@@ -183,35 +202,47 @@ class ViewProviderWireTip:
             pass
 
     @staticmethod
-    def _sync_geometry_visibility(vobj):
+    def _tip_geometry(vobj):
         tip = vobj.Object
-        cable = None
         for parent in tip.InList:
             if getattr(getattr(parent, "Proxy", None), "Type", None) == "WireCable":
-                cable = parent
-                break
-        if cable is None:
-            return
-        if getattr(cable, "StartTip", None) is tip:
-            names = (
-                "StartCoreObject",
-                "StartFerruleMetal",
-                "StartFerruleSleeve",
-            )
-        else:
-            names = (
-                "EndCoreObject",
-                "EndFerruleMetal",
-                "EndFerruleSleeve",
-            )
+                if getattr(parent, "StartTip", None) is tip:
+                    names = (
+                        "StartCoreObject",
+                        "StartFerruleMetal",
+                        "StartFerruleSleeve",
+                    )
+                else:
+                    names = (
+                        "EndCoreObject",
+                        "EndFerruleMetal",
+                        "EndFerruleSleeve",
+                    )
+                return [
+                    getattr(parent, name)
+                    for name in names
+                    if getattr(parent, name, None) is not None
+                    and getattr(parent, name).isValid()
+                ]
+        return []
+
+    @staticmethod
+    def _sync_geometry_visibility(vobj):
         visible = bool(vobj.Visibility)
-        for name in names:
-            helper = getattr(cable, name, None)
-            if helper is not None and helper.isValid():
-                try:
-                    helper.ViewObject.Visibility = visible
-                except Exception:
-                    pass
+        for helper in ViewProviderWireTip._tip_geometry(vobj):
+            try:
+                helper.ViewObject.Visibility = visible
+            except Exception:
+                pass
+
+    @staticmethod
+    def _sync_geometry_transparency(vobj):
+        transparency = getattr(vobj, "Transparency", 0)
+        for helper in ViewProviderWireTip._tip_geometry(vobj):
+            try:
+                helper.ViewObject.Transparency = transparency
+            except Exception:
+                pass
 
     def setEdit(self, vobj, mode):
         if mode != 0:
@@ -219,12 +250,24 @@ class ViewProviderWireTip:
         from .WireTipTaskPanel import WireTipTaskPanel
 
         Gui.Control.showDialog(WireTipTaskPanel(tip=vobj.Object))
+        try:
+            from .WireSelection import schedule_select_tool_object
+
+            schedule_select_tool_object(vobj.Object)
+        except Exception:
+            pass
         return True
 
     def unsetEdit(self, vobj, mode):
         if mode != 0:
             return False
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import schedule_clear_tool_selection
+
+            schedule_clear_tool_selection(vobj.Object)
+        except Exception:
+            pass
         return True
 
     def doubleClicked(self, vobj):

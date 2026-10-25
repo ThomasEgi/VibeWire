@@ -254,6 +254,13 @@ class WireBundleTaskPanel:
 
     def _on_form_destroyed(self, *args):
         self._stop_picking()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.bundle)
+            schedule_clear_tool_selection(self.bundle)
+        except Exception:
+            pass
 
     def _current_row(self):
         row = self.segment_list.currentRow()
@@ -456,7 +463,21 @@ class WireBundleTaskPanel:
     def reject(self):
         self._stop_picking()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.bundle)
+            schedule_clear_tool_selection(self.bundle)
+        except Exception:
+            pass
 
     def accept(self):
         self._stop_picking()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.bundle)
+            schedule_clear_tool_selection(self.bundle)
+        except Exception:
+            pass

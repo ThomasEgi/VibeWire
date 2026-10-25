@@ -322,12 +322,24 @@ class ViewProviderWireBundle:
         from .WireBundleTaskPanel import WireBundleTaskPanel
 
         Gui.Control.showDialog(WireBundleTaskPanel(bundle=vobj.Object))
+        try:
+            from .WireSelection import schedule_select_tool_object
+
+            schedule_select_tool_object(vobj.Object)
+        except Exception:
+            pass
         return True
 
     def unsetEdit(self, vobj, mode):
         if mode != 0:
             return False
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import schedule_clear_tool_selection
+
+            schedule_clear_tool_selection(vobj.Object)
+        except Exception:
+            pass
         return True
 
     def doubleClicked(self, vobj):

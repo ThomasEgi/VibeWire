@@ -50,3 +50,12 @@
 - 2026-10-25: Replaced DIN 47100 cable colors with the international single-color and two-color primary/tracer code; removed three-color options and kept PE.
 - 2026-10-25: Replaced the long combined color list with primary/tracer dropdowns; restored Pink/Turquoise, kept PE as a Green/Yellow shortcut, and dropped the international combination CSV dependency.
 - 2026-10-25: Ferrule tips now default to the shortest conforming variant when enabled or when the cable cross-section changes.
+- 2026-10-25: Selecting a tip now highlights its ferrule/core helpers; selection clearing also clears stale tip rows from the tree.
+- 2026-10-25: Tool close now fully deselects the edited object, including the tree current item; empty-space clearing also removes the shortened current-item highlight.
+- 2026-10-25: Tool close now deselects only the edited object/current-item highlight, preserving any other active selection.
+- 2026-10-25: Cleared stale tree selection background brushes; tool close now removes only the tool object while preserving other selections.
+- 2026-10-25: Re-selects the edited tip/cable after opening a tool so its 3D highlight remains visible; closing still preserves other selections.
+- 2026-10-25: Fixed helper highlight restoring a green ambient color; selection highlight now changes diffuse only and restores ambient/specular state.
+- 2026-10-25: Added a tip-level Transparency view property that applies to the tip/ferrule helper geometry.
+- 2026-10-25: Selection highlighting now preserves helper transparency, including changes made while the tip is selected.
+- 2026-10-25: Refactored helper selection into one queued reconciler with canonical helper materials; fixes tip-to-tip highlighting races while preserving transparency and clearing stale tree state.

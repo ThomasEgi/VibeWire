@@ -84,6 +84,16 @@ class WireTipTaskPanel:
         )
 
         self._update_ferrule_details()
+        self.form.destroyed.connect(self._on_form_destroyed)
+
+    def _on_form_destroyed(self, *args):
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.tip)
+            schedule_clear_tool_selection(self.tip)
+        except Exception:
+            pass
 
     def _build_offset_page(self):
         page = QtGui.QWidget()
@@ -445,6 +455,13 @@ class WireTipTaskPanel:
         self._timer.stop()
         self._apply_live()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.tip)
+            schedule_clear_tool_selection(self.tip)
+        except Exception:
+            pass
 
     def reject(self):
         self._timer.stop()
@@ -453,3 +470,10 @@ class WireTipTaskPanel:
             if self.tip.Document is not None:
                 self.tip.Document.recompute()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.tip)
+            schedule_clear_tool_selection(self.tip)
+        except Exception:
+            pass

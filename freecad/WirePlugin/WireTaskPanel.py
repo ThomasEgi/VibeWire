@@ -438,6 +438,13 @@ class WireTaskPanel:
     def _on_form_destroyed(self, *args):
         self._stop_picking()
         self._remove_selection_observer()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.cable)
+            schedule_clear_tool_selection(self.cable)
+        except Exception:
+            pass
 
     def _remove_selection_observer(self):
         if self._selection_observer is not None:
@@ -1025,8 +1032,22 @@ class WireTaskPanel:
         self._stop_picking()
         self._remove_selection_observer()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.cable)
+            schedule_clear_tool_selection(self.cable)
+        except Exception:
+            pass
 
     def accept(self):
         self._stop_picking()
         self._remove_selection_observer()
         Gui.Control.closeDialog()
+        try:
+            from .WireSelection import clear_tool_selection, schedule_clear_tool_selection
+
+            clear_tool_selection(self.cable)
+            schedule_clear_tool_selection(self.cable)
+        except Exception:
+            pass
