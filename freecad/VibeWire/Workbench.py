@@ -1,4 +1,4 @@
-"""Workbench definition for Wire Plugin."""
+"""Workbench definition for VibeWire."""
 import os
 
 import FreeCADGui
@@ -10,11 +10,11 @@ WireSelection.install()
 ICON_DIR = os.path.join(os.path.dirname(__file__), "Resources", "Icons")
 
 
-class WirePluginWorkbench(FreeCADGui.Workbench):
-    """WirePlugin workbench for cable and bundle routing operations."""
+class VibeWireWorkbench(FreeCADGui.Workbench):
+    """VibeWire workbench for cable and harness routing operations."""
 
-    MenuText = "WirePlugin"
-    ToolTip = "Wire and Cable Routing"
+    MenuText = "VibeWire"
+    ToolTip = "A cable/wireharness plugin for FreeCAD"
     Icon = os.path.join(ICON_DIR, "wire_icon.png")
 
     def __init__(self):
@@ -24,13 +24,13 @@ class WirePluginWorkbench(FreeCADGui.Workbench):
         if self._initialized:
             return
 
-        import freecad.WirePlugin.WirePluginCmd  # noqa: F401
+        import freecad.VibeWire.VibeWireCmd  # noqa: F401
 
-        wire_cmds = ["WirePlugin_CreateWire"]
-        bundle_cmds = ["WirePlugin_DefineHarness"]
+        wire_cmds = ["VibeWire_CreateWire"]
+        bundle_cmds = ["VibeWire_DefineHarness"]
         self.appendToolbar("Wire", wire_cmds)
         self.appendToolbar("Harness", bundle_cmds)
-        self.appendMenu("WirePlugin", wire_cmds + bundle_cmds)
+        self.appendMenu("VibeWire", wire_cmds + bundle_cmds)
         self._initialized = True
 
     def ContextMenu(self, recipient):
@@ -42,17 +42,17 @@ class WirePluginWorkbench(FreeCADGui.Workbench):
         kind = getattr(getattr(selection[0], "Proxy", None), "Type", None)
         commands = {
             "WireCable": [
-                "WirePlugin_EditWire",
-                "WirePlugin_EditStartTip",
-                "WirePlugin_EditEndTip",
+                "VibeWire_EditWire",
+                "VibeWire_EditStartTip",
+                "VibeWire_EditEndTip",
             ],
-            "WireTip": ["WirePlugin_EditTip"],
+            "WireTip": ["VibeWire_EditTip"],
             "WireBundleSegment": [
-                "WirePlugin_EditHarness",
-                "WirePlugin_MoveSegmentStart",
-                "WirePlugin_MoveSegmentEnd",
+                "VibeWire_EditHarness",
+                "VibeWire_MoveSegmentStart",
+                "VibeWire_MoveSegmentEnd",
             ],
-            "WireHarness": ["WirePlugin_EditHarness"],
+            "WireHarness": ["VibeWire_EditHarness"],
         }.get(kind)
         if commands:
             self.appendContextMenu("", "Separator")
@@ -68,4 +68,4 @@ class WirePluginWorkbench(FreeCADGui.Workbench):
         return "Gui::PythonWorkbench"
 
 
-FreeCADGui.addWorkbench(WirePluginWorkbench())
+FreeCADGui.addWorkbench(VibeWireWorkbench())

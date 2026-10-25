@@ -1,4 +1,4 @@
-# FreeCAD Wire/Cable Routing Plugin - Project Plan
+# VibeWire - Project Plan
 
 ## Terminology
 - **Wire/Cable**: Interchangeable terms. A cable is a circular object following a defined path.

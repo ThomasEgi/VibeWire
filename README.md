@@ -1,8 +1,8 @@
 > **TL;DR:** A mostly vibe coded FreeCAD workbench for routing cables along reusable segments, insulation colors, and configurable cable tips. **Very much work in progress! Looking for feedback**
 
-# WirePlugin for FreeCAD
+# VibeWire for FreeCAD
 
-WirePlugin is a FreeCAD workbench for modeling cable harnesses by routing wires along reusable straight bundle segments. Cables are built from ordered segment runs with per-segment direction, harness lane offsets, and configurable cable ends.
+VibeWire is a FreeCAD workbench for modeling cable harnesses by routing wires along reusable straight bundle segments. Cables are built from ordered segment runs with per-segment direction, harness lane offsets, and configurable cable ends.
 
 ## Concept
 

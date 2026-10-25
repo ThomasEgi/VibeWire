@@ -74,3 +74,4 @@
 - 2026-10-25: Grouped all harness segments in a standard Segments group so the group eye toggles their visibility together.
 - 2026-10-25: Opening the harness editor from a selected bundle segment now selects that segment's row and preserves the 3D selection.
 - 2026-10-25: Moved display radius into the selected segment controls with live per-segment updates; Add Segment copies the active/default radius.
+- 2026-10-25: Renamed the addon package/workbench to VibeWire and switched licensing metadata to MIT.

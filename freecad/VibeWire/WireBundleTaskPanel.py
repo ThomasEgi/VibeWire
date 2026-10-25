@@ -212,7 +212,7 @@ class WireBundleTaskPanel:
         row = self._current_row()
         if row is None:
             QtGui.QMessageBox.information(
-                self.form, "WirePlugin", "Add and select a segment first."
+                self.form, "VibeWire", "Add and select a segment first."
             )
             return
 
@@ -537,7 +537,7 @@ class WireBundleTaskPanel:
         try:
             segment_points = self._collect_segments(document)
         except ValueError as error:
-            QtGui.QMessageBox.warning(self.form, "WirePlugin", str(error))
+            QtGui.QMessageBox.warning(self.form, "VibeWire", str(error))
             return
 
         try:
@@ -585,7 +585,7 @@ class WireBundleTaskPanel:
 
             ensure_segment_group(self.bundle)
         except Exception as error:
-            QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
+            QtGui.QMessageBox.critical(self.form, "VibeWire", str(error))
             return
 
         document.recompute()

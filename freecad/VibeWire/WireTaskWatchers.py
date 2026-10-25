@@ -1,4 +1,4 @@
-"""Contextual task-panel tools for WirePlugin selections."""
+"""Contextual task-panel tools for VibeWire selections."""
 
 import os
 
@@ -82,8 +82,8 @@ def _button_container(buttons):
 class WireCreateWatcher:
     def __init__(self):
         self.commands = [
-            "WirePlugin_CreateWire",
-            "WirePlugin_DefineHarness",
+            "VibeWire_CreateWire",
+            "VibeWire_DefineHarness",
         ]
         self.title = "Create"
 
@@ -98,19 +98,19 @@ class WireCableWatcher:
             [
                 HoverToolButton(
                     "Edit Wire",
-                    "WirePlugin_EditWire",
+                    "VibeWire_EditWire",
                     WireSelection.preview_selected_cable,
                     "Preview and edit the selected cable",
                 ),
                 HoverToolButton(
                     "Edit Start Tip",
-                    "WirePlugin_EditStartTip",
+                    "VibeWire_EditStartTip",
                     WireSelection.preview_start_tip,
                     "Preview and edit the start tip",
                 ),
                 HoverToolButton(
                     "Edit End Tip",
-                    "WirePlugin_EditEndTip",
+                    "VibeWire_EditEndTip",
                     WireSelection.preview_end_tip,
                     "Preview and edit the end tip",
                 ),
@@ -128,7 +128,7 @@ class WireTipWatcher:
             [
                 HoverToolButton(
                     "Edit Tip",
-                    "WirePlugin_EditTip",
+                    "VibeWire_EditTip",
                     WireSelection.preview_selected_tip,
                     "Preview and edit the selected tip",
                 )
@@ -146,18 +146,18 @@ class WireBundleWatcher:
             [
                 HoverToolButton(
                     "Edit Harness",
-                    "WirePlugin_EditHarness",
+                    "VibeWire_EditHarness",
                     tooltip="Open the harness tool",
                 ),
                 HoverToolButton(
                     "Move Start Point",
-                    "WirePlugin_MoveSegmentStart",
+                    "VibeWire_MoveSegmentStart",
                     WireSelection.preview_segment_start,
                     "Preview and move the bundle segment start node",
                 ),
                 HoverToolButton(
                     "Move End Point",
-                    "WirePlugin_MoveSegmentEnd",
+                    "VibeWire_MoveSegmentEnd",
                     WireSelection.preview_segment_end,
                     "Preview and move the bundle segment end node",
                 ),
@@ -170,7 +170,7 @@ class WireBundleWatcher:
 
 class WireHarnessWatcher:
     def __init__(self):
-        self.commands = ["WirePlugin_EditHarness"]
+        self.commands = ["VibeWire_EditHarness"]
         self.title = "Harness Tools"
 
     def shouldShow(self):

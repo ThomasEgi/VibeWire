@@ -1,12 +1,12 @@
-"""Commands for Wire Plugin."""
+"""Commands for VibeWire."""
 
 import os
 
 import FreeCADGui as Gui
 from PySide import QtGui
 
-from freecad.WirePlugin.WireBundleTaskPanel import WireBundleTaskPanel
-from freecad.WirePlugin.WireTaskPanel import WireTaskPanel
+from freecad.VibeWire.WireBundleTaskPanel import WireBundleTaskPanel
+from freecad.VibeWire.WireTaskPanel import WireTaskPanel
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 
@@ -16,20 +16,20 @@ class CreateWireCommand:
         return {
             "Pixmap": ICON,
             "MenuText": "Create Wire",
-            "ToolTip": "Create a wire from coordinate system start/end points",
+            "ToolTip": "Create a bundle-segment cable route",
         }
 
     def Activated(self):
         try:
             Gui.Control.showDialog(WireTaskPanel())
         except Exception as error:
-            QtGui.QMessageBox.critical(None, "WirePlugin", str(error))
+            QtGui.QMessageBox.critical(None, "VibeWire", str(error))
 
     def IsActive(self):
         return True
 
 
-Gui.addCommand("WirePlugin_CreateWire", CreateWireCommand())
+Gui.addCommand("VibeWire_CreateWire", CreateWireCommand())
 
 
 class DefineHarnessCommand:
@@ -37,20 +37,20 @@ class DefineHarnessCommand:
         return {
             "Pixmap": ICON,
             "MenuText": "Define Harness",
-            "ToolTip": "Define harness bundle segments and cable gap",
+            "ToolTip": "Define harness bundle segments and cable arrangement",
         }
 
     def Activated(self):
         try:
             Gui.Control.showDialog(WireBundleTaskPanel())
         except Exception as error:
-            QtGui.QMessageBox.critical(None, "WirePlugin", str(error))
+            QtGui.QMessageBox.critical(None, "VibeWire", str(error))
 
     def IsActive(self):
         return True
 
 
-Gui.addCommand("WirePlugin_DefineHarness", DefineHarnessCommand())
+Gui.addCommand("VibeWire_DefineHarness", DefineHarnessCommand())
 
 
 def _selected_one():
@@ -87,7 +87,7 @@ def _open_tool(obj):
     try:
         Gui.ActiveDocument.setEdit(obj, 0)
     except Exception as error:
-        QtGui.QMessageBox.critical(None, "WirePlugin", str(error))
+        QtGui.QMessageBox.critical(None, "VibeWire", str(error))
 
 
 class EditWireCommand:
@@ -227,10 +227,10 @@ def _move_point(point):
     Gui.runCommand("Std_Placement", 0)
 
 
-Gui.addCommand("WirePlugin_EditWire", EditWireCommand())
-Gui.addCommand("WirePlugin_EditStartTip", EditStartTipCommand())
-Gui.addCommand("WirePlugin_EditEndTip", EditEndTipCommand())
-Gui.addCommand("WirePlugin_EditTip", EditTipCommand())
-Gui.addCommand("WirePlugin_EditHarness", EditHarnessCommand())
-Gui.addCommand("WirePlugin_MoveSegmentStart", MoveSegmentStartCommand())
-Gui.addCommand("WirePlugin_MoveSegmentEnd", MoveSegmentEndCommand())
+Gui.addCommand("VibeWire_EditWire", EditWireCommand())
+Gui.addCommand("VibeWire_EditStartTip", EditStartTipCommand())
+Gui.addCommand("VibeWire_EditEndTip", EditEndTipCommand())
+Gui.addCommand("VibeWire_EditTip", EditTipCommand())
+Gui.addCommand("VibeWire_EditHarness", EditHarnessCommand())
+Gui.addCommand("VibeWire_MoveSegmentStart", MoveSegmentStartCommand())
+Gui.addCommand("VibeWire_MoveSegmentEnd", MoveSegmentEndCommand())

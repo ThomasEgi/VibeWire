@@ -11,7 +11,7 @@ DEFAULT_CSV = PROJECT_ROOT / "wire_end_sleeves_DIN_46228_T4_complete.csv"
 DEFAULT_JSON = (
     PROJECT_ROOT
     / "freecad"
-    / "WirePlugin"
+    / "VibeWire"
     / "Resources"
     / "Data"
     / "ferrules_DIN46228_T4.json"

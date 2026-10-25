@@ -322,7 +322,7 @@ class WireTaskPanel:
         row = self._current_row()
         if row is None:
             QtGui.QMessageBox.information(
-                self.form, "WirePlugin", "Add and select a segment first."
+                self.form, "VibeWire", "Add and select a segment first."
             )
             return
 
@@ -910,7 +910,7 @@ class WireTaskPanel:
                 self.status_label.setStyleSheet("color: #b00000;")
                 self.status_label.setText(str(error))
             else:
-                QtGui.QMessageBox.warning(self.form, "WirePlugin", str(error))
+                QtGui.QMessageBox.warning(self.form, "VibeWire", str(error))
             return
 
         diameter = self.diameter_spin.value()
@@ -955,7 +955,7 @@ class WireTaskPanel:
                 self.status_label.setStyleSheet("color: #b00000;")
                 self.status_label.setText(str(error))
             else:
-                QtGui.QMessageBox.critical(self.form, "WirePlugin", str(error))
+                QtGui.QMessageBox.critical(self.form, "VibeWire", str(error))
             return
 
         if harness is not None:

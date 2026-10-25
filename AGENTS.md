@@ -1,4 +1,4 @@
-# AGENTS.md - FreeCAD Wire/Cable Routing Plugin
+# AGENTS.md - VibeWire FreeCAD Cable/Harness Plugin
 
 ## Commands, Shortcuts and Hints
 
@@ -104,8 +104,8 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - The harness editor list and 3D selection sync in both directions. Opening the harness editor from a segment selects its row and preserves the segment selection.
 
 ### Plugin Structure
-- Workbench: `WirePluginWorkbench`, registered with `FreeCADGui.addWorkbench()`.
-- Toolbar commands: `WirePlugin_CreateWire` and `WirePlugin_DefineHarness`.
+- Workbench: `VibeWireWorkbench`, registered with `FreeCADGui.addWorkbench()`. The Python package path is `freecad.VibeWire`.
+- Toolbar commands: `VibeWire_CreateWire` and `VibeWire_DefineHarness`.
 - Context-menu commands: cables offer Edit Wire/Start Tip/End Tip; tips offer Edit Tip; bundle segments offer Edit Harness plus Move Start/End Point (transform gizmo with `Std_Placement` fallback); harnesses offer Edit Harness.
 - Workbench task watchers populate the Tasks panel contextually: Create, Wire Tools, Tip Tools, Bundle Tools, Harness Tools.
 - Wire/Tip/Bundle task-watcher entries are custom hover buttons. Hovering does not change selection: cable hover turns the cable green, tip hover highlights helpers or shows a temporary green tube for an offset tip’s route end, and bundle Move Start/End shows an opaque green cap face plus circular edge.
@@ -117,7 +117,7 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `FerruleData.py` loads the checked-in ferrule JSON.
 - `WireSelection.py` provides the selection reconciler, helper remapping and hover previews.
 - `WireTaskWatchers.py` defines the contextual Tasks-panel groups and hover buttons.
-- Installed in `freecad/WirePlugin/` inside the addon.
+- Installed from `freecad/VibeWire/` inside the addon; the user-facing addon/package name is `VibeWire`.
 
 ## Setup Requirements
 
@@ -193,20 +193,20 @@ Bundle segment endpoints are point references defined in global coordinates or r
   - `biarc_total_len`, `chord_len`, `radius` when available.
 
 ## References
-- `freecad/WirePlugin/WireCreator.py` — bi-arc/path/sweep and sector profile implementation.
-- `freecad/WirePlugin/WireCable.py` — persistent cable object, validation, colors and helpers.
-- `freecad/WirePlugin/WireTaskPanel.py` — bundle-segment wire route editor and geometry controls.
-- `freecad/WirePlugin/WirePluginCmd.py` — toolbar and context-menu commands.
-- `freecad/WirePlugin/WireBundle.py` — harness layout, segment group, segment objects and view providers.
-- `freecad/WirePlugin/WireBundleTaskPanel.py` — harness segment/group/radius/gap/pattern editor.
-- `freecad/WirePlugin/WireTip.py` — per-end cable tip settings object and view provider.
-- `freecad/WirePlugin/WireTipTaskPanel.py` — cable tip settings editor.
-- `freecad/WirePlugin/FerruleData.py` — ferrule JSON loader and helpers.
-- `freecad/WirePlugin/WireSelection.py` — selection reconciler, helper remapping and hover previews.
-- `freecad/WirePlugin/WireTaskWatchers.py` — contextual Tasks-panel tool groups and hover buttons.
-- `freecad/WirePlugin/WireColors.py` — primary/tracer cable color palette and quadrant layouts.
-- `freecad/WirePlugin/Resources/Data/ferrules_DIN46228_T4.json` — checked-in ferrule library.
-- `freecad/WirePlugin/PointReference.py` — shared point-reference pick helpers and selection gates.
+- `freecad/VibeWire/WireCreator.py` — bi-arc/path/sweep and sector profile implementation.
+- `freecad/VibeWire/WireCable.py` — persistent cable object, validation, colors and helpers.
+- `freecad/VibeWire/WireTaskPanel.py` — bundle-segment wire route editor and geometry controls.
+- `freecad/VibeWire/VibeWireCmd.py` — toolbar and context-menu commands.
+- `freecad/VibeWire/WireBundle.py` — harness layout, segment group, segment objects and view providers.
+- `freecad/VibeWire/WireBundleTaskPanel.py` — harness segment/group/radius/gap/pattern editor.
+- `freecad/VibeWire/WireTip.py` — per-end cable tip settings object and view provider.
+- `freecad/VibeWire/WireTipTaskPanel.py` — cable tip settings editor.
+- `freecad/VibeWire/FerruleData.py` — ferrule JSON loader and helpers.
+- `freecad/VibeWire/WireSelection.py` — selection reconciler, helper remapping and hover previews.
+- `freecad/VibeWire/WireTaskWatchers.py` — contextual Tasks-panel tool groups and hover buttons.
+- `freecad/VibeWire/WireColors.py` — primary/tracer cable color palette and quadrant layouts.
+- `freecad/VibeWire/Resources/Data/ferrules_DIN46228_T4.json` — checked-in ferrule library.
+- `freecad/VibeWire/PointReference.py` — shared point-reference pick helpers and selection gates.
 - `tools/csv_to_ferrules_json.py` — example ferrule CSV-to-JSON converter.
 - `plan.md` — milestones and pending naming TODO.
 - `diary.md` — development log.
