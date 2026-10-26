@@ -339,6 +339,17 @@ Goal: Store what each cable end connects to and expose that data for wire labeli
 ## Milestone 3: Open Bundle Segments / Duct Auto-Routing (Future)
 Goal: Support slotted wiring ducts and open channels where cables can enter, leave and branch at arbitrary points along a straight bundle segment.
 
+> **Selected M3 transition set (2026-10-26):**
+> - **Point → segment:** solution 4 (alignment arc → 90° arc → perpendicular line → 90° fillet), tested in `snippet_archive/m3_open_duct_shortest_path.py`. Fixed-radius arcs only, no iterative search, deterministic entry, ~0.085 ms/call.
+> - **Segment → point:** reverse the inputs to solution 4, run it, then reverse the resulting path; tested in `snippet_archive/m3_segment_to_point.py` as the exact reverse of the S4 stem-end → angled path (source = angled B → A, target = stem end, arrival tangent = -T0).
+> - **Segment → segment:** common perpendicular + two 90° fillets, tested in `snippet_archive/m3_segment_to_segment.py`. The shortest line between the ducts is perpendicular to both, so fixed-radius arcs are placed directly into the two corners. The target duct is shifted 20 mm along Y in the test to give the source fillet room.
+>
+> Multiple alternatives were compared in `snippet_archive/m3_open_duct_shortest_path.py`; the search-based arc-line-arc variants were kept for comparison but are not the selected M3 primitives.
+>
+> **Implementation progress (2026-10-26):** `WireBundleSegment` now has a `SegmentType` enum (`Closed` default, `Open`). `WireCable` stores `SegmentEntryParams`/`SegmentExitParams`; closed segments reject non-endpoint values, while open segments use automatic routing. First and last route segments are always treated as closed for that wire, so wire tips stay end-to-end even when the segment is globally open. The harness editor exposes the type and marks open segments in the list. `WireTransitions.py` now provides the tested primitives, and `WireCable` uses them automatically: tip/closed → open uses S4, open → tip/closed uses reversed S4, open → open uses the common perpendicular + two 90° fillets, and closed → closed keeps the legacy bi-arc. The three-segment harness test shows the straight connectors and validates tip offsets and the closed-segment rule. Manual entry/exit parameters are currently ignored for open segments in auto mode.
+>
+> **Follow-up (2026-10-26):** Re-evaluate the S4 point → segment transition. It works in the current automatic flow, but may benefit from tweaks or minor additional options (radius multiplier, approach side, connector placement). Prototype changes in `snippet_archive` before updating `WireTransitions.py`/`WireCable.py`.
+
 ### Requirements
 - [ ] **Open bundle segment type**: Bundle segments can be closed tubes (current behavior) or open slotted ducts; store cross-section/opening dimensions and display duct geometry.
 - [ ] **Closest-point attachment**: When a wire starts or ends on an open segment, compute the closest point on its centerline/axis and use that as the entry/exit point instead of the segment endpoints.
@@ -386,6 +397,7 @@ Goal: Support slotted wiring ducts and open channels where cables can enter, lea
 - [ ] **Wire endpoint / conductor editor**: Dedicated menu for editing wire endpoints with presets for US AWG gauge and metric cross-section area, conductor construction (solid, stranded, fine-stranded) for small dimensional variations, and typical insulation thickness. Derive conductor and outer diameters so the swept geometry is dimensionally correct. See M2C for the ferrule data and wire-size selection foundation.
 - [x] **Stripped wire tips (initial)**: Tip type with stripped length, wire-level core diameter/area input (mm/mm² unit selector), common 1.0/1.5/2.5 mm² presets shared by both tips, and generated core cylinders limited to the cable diameter.
 - [ ] **Ferrules and expanded conductor presets**: Add ferrule geometry and broader AWG/metric conductor presets to the cable-tip panel. M2C covers the initial DIN 46228 T4 library and ferrule rendering.
+- [ ] **Soldered tip type**: Add a `Soldered` tip type represented by an ellipsoid wrapping around the stripped wire tip (core). Expose the ellipsoid length/width/offset in the tip panel and generate it with the existing tip visibility and transparency behavior.
 - [ ] **Flat ribbon cable routing**: Dedicated routing approach for flat ribbon cable with multiple parallel conductors. Constrain bending to one axis, prevent in-plane twisting, support folds (including reverse folds), and generate ribbon width/thickness plus conductor geometry using a fold-aware path model.
 - [ ] **Pathfinding/obstacle avoidance**
 - [ ] **Properties (gauge/color)**, **BOM**

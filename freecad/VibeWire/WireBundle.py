@@ -16,6 +16,11 @@ def is_bundle_segment(obj):
     return getattr(getattr(obj, "Proxy", None), "Type", None) == BUNDLE_SEGMENT_TYPE
 
 
+def segment_is_open(segment):
+    """Return True when a bundle segment allows arbitrary wire entry/exit."""
+    return getattr(segment, "SegmentType", "Closed") == "Open"
+
+
 class WireHarnessProxy:
     """Harness container and layout authority for bundle segments and cables."""
 
@@ -505,6 +510,15 @@ class WireBundleSegmentProxy:
                 "Maximum cables allowed in this segment (0 = unlimited)",
             )
             obj.MaxCables = 0
+        if "SegmentType" not in obj.PropertiesList:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "SegmentType",
+                "Segment",
+                "Closed = end-to-end connections only; Open = wires may enter/exit anywhere",
+            )
+            obj.SegmentType = ["Closed", "Open"]
+            obj.SegmentType = "Closed"
         if "Dependencies" not in obj.PropertiesList:
             obj.addProperty(
                 "App::PropertyLinkListGlobal",
@@ -544,7 +558,7 @@ class WireBundleSegmentProxy:
                 pass
 
     def onChanged(self, obj, prop):
-        if prop != "MaxCables":
+        if prop not in ("MaxCables", "SegmentType"):
             return
         for parent in obj.InList:
             if getattr(getattr(parent, "Proxy", None), "Type", None) in (
@@ -652,7 +666,7 @@ def create_wire_bundle(document, label="Harness"):
     return create_wire_harness(document, label=label)
 
 
-def create_bundle_segment(bundle, start, end, radius=10.0):
+def create_bundle_segment(bundle, start, end, radius=10.0, segment_type="Closed"):
     document = bundle.Document
     segment = document.addObject("Part::FeaturePython", "BundleSegment")
     segment.Label = "Bundle Segment"
@@ -660,6 +674,7 @@ def create_bundle_segment(bundle, start, end, radius=10.0):
     segment.Start = start
     segment.End = end
     segment.Radius = radius
+    segment.SegmentType = segment_type
     update_segment_dependencies(segment)
     if App.GuiUp:
         try:

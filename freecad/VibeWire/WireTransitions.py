@@ -1,0 +1,431 @@
+"""Geometric transitions for open bundle-segment routing.
+
+The solvers here are the tested M3 primitives:
+
+- point -> segment: solution 4 (alignment arc, 90 degree arc, perpendicular
+  line, 90 degree fillet),
+- segment -> point: the same solver with reversed inputs and a reversed path,
+- segment -> segment: common perpendicular plus two 90 degree fillets.
+
+All returned paths are lists of pieces with edge, length, start and end keys.
+"""
+
+import math
+
+import FreeCAD as App
+import Part
+
+V = App.Vector
+EPS = 1e-9
+
+
+def clamp(value, low=0.0, high=1.0):
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+def unit_vector(vector):
+    length = vector.Length
+    if length < 1e-12:
+        raise ValueError("Cannot normalize a zero vector")
+    return V(vector) / length
+
+
+def closest_points_segments(p1, q1, p2, q2, eps=EPS):
+    d1 = q1 - p1
+    d2 = q2 - p2
+    r = p1 - p2
+    a = d1.dot(d1)
+    e = d2.dot(d2)
+    f = d2.dot(r)
+
+    if a <= eps and e <= eps:
+        return p1, p2
+
+    if a <= eps:
+        s = 0.0
+        t = clamp(f / e)
+    else:
+        c = d1.dot(r)
+        if e <= eps:
+            t = 0.0
+            s = clamp(-c / a)
+        else:
+            b = d1.dot(d2)
+            denom = a * e - b * b
+            if denom > eps * a * e:
+                s = clamp((b * f - c * e) / denom)
+            else:
+                s = 0.0
+            t = (b * s + f) / e
+            if t < 0.0:
+                t = 0.0
+                s = clamp(-c / a)
+            elif t > 1.0:
+                t = 1.0
+                s = clamp((b - c) / a)
+
+    return p1 + d1 * s, p2 + d2 * t
+
+
+def closest_point_on_segment(segment, point):
+    start, end = segment
+    direction = end - start
+    length_sq = direction.dot(direction)
+    if length_sq <= EPS * EPS:
+        return start
+    parameter = clamp((point - start).dot(direction) / length_sq)
+    return start + direction * parameter
+
+
+def raw_segment_param(segment, point):
+    start, end = segment
+    direction = end - start
+    length_sq = direction.dot(direction)
+    if length_sq <= EPS * EPS:
+        return 0.0
+    return (point - start).dot(direction) / length_sq
+
+
+def arc_from_start_tangent(center, start_point, end_point, start_tangent):
+    radius_vector = start_point - center
+    normal = unit_vector(radius_vector.cross(start_tangent))
+    circle = Part.Circle(center, normal, radius_vector.Length)
+    circle.XAxis = unit_vector(radius_vector)
+    end_vector = end_point - center
+    angle = math.atan2(
+        normal.dot(radius_vector.cross(end_vector)),
+        radius_vector.dot(end_vector),
+    )
+    if angle <= 0.0:
+        angle += 2.0 * math.pi
+    return Part.ArcOfCircle(circle, 0.0, angle).toShape(), angle, normal
+
+
+def reverse_edge(edge):
+    if isinstance(edge.Curve, Part.Circle):
+        start = edge.valueAt(edge.LastParameter)
+        end = edge.valueAt(edge.FirstParameter)
+        tangent = -edge.tangentAt(edge.LastParameter)
+        reversed_edge, _, _ = arc_from_start_tangent(
+            edge.Curve.Center,
+            start,
+            end,
+            tangent,
+        )
+        return reversed_edge
+    return Part.makeLine(
+        edge.valueAt(edge.LastParameter),
+        edge.valueAt(edge.FirstParameter),
+    )
+
+
+def solve_point_to_segment(
+    start_point,
+    start_tangent,
+    target_start,
+    target_end,
+    radius,
+):
+    tangent = unit_vector(start_tangent)
+    target_direction = unit_vector(target_end - target_start)
+    target_length = (target_end - target_start).Length
+    cosine = clamp(tangent.dot(target_direction), -1.0, 1.0)
+    turn = math.acos(cosine)
+
+    if turn < 1e-6:
+        raise ValueError("Start tangent is already parallel to the target")
+    if turn > math.pi - 1e-6:
+        raise ValueError("Start tangent is anti-parallel to the target")
+
+    side = unit_vector(target_direction - tangent * cosine)
+    orientation_center = start_point + side * radius
+    orientation_end = (
+        start_point
+        + tangent * (radius * math.sin(turn))
+        + side * (radius * (1.0 - math.cos(turn)))
+    )
+    orientation_arc, orientation_angle, _ = arc_from_start_tangent(
+        orientation_center,
+        start_point,
+        orientation_end,
+        tangent,
+    )
+
+    foot_param = (orientation_end - target_start).dot(target_direction)
+    foot_point = target_start + target_direction * foot_param
+    to_target = foot_point - orientation_end
+    distance = to_target.Length
+    if distance < 1e-9:
+        raise ValueError("Alignment end lies on the target line")
+    perpendicular_direction = unit_vector(to_target)
+    if distance <= 2.0 * radius + 1e-9:
+        raise ValueError("Perpendicular line would have non-positive length")
+
+    arc_a_center = orientation_end + perpendicular_direction * radius
+    arc_a_end = (
+        orientation_end
+        + target_direction * radius
+        + perpendicular_direction * radius
+    )
+    arc_a, arc_a_angle, _ = arc_from_start_tangent(
+        arc_a_center,
+        orientation_end,
+        arc_a_end,
+        target_direction,
+    )
+
+    line_end = (
+        foot_point
+        + target_direction * radius
+        - perpendicular_direction * radius
+    )
+    line = Part.makeLine(arc_a_end, line_end)
+    line_length = (line_end - arc_a_end).dot(perpendicular_direction)
+    if line_length <= 1e-9:
+        raise ValueError("Perpendicular line is degenerate")
+
+    q = foot_point + target_direction * (2.0 * radius)
+    entry_param = raw_segment_param((target_start, target_end), q)
+    if entry_param < -1e-9 or entry_param > 1.0 + 1e-9:
+        raise ValueError("Perpendicular transition entry lies outside the target segment")
+
+    fillet_center = q - perpendicular_direction * radius
+    fillet_arc, fillet_angle, _ = arc_from_start_tangent(
+        fillet_center,
+        line_end,
+        q,
+        perpendicular_direction,
+    )
+
+    pieces = [
+        {
+            "kind": "arc",
+            "name": "orientation arc",
+            "edge": orientation_arc,
+            "length": orientation_arc.Length,
+            "start": start_point,
+            "end": orientation_end,
+        },
+        {
+            "kind": "arc",
+            "name": "perpendicular turn arc",
+            "edge": arc_a,
+            "length": arc_a.Length,
+            "start": orientation_end,
+            "end": arc_a_end,
+        },
+        {
+            "kind": "line",
+            "name": "perpendicular line",
+            "edge": line,
+            "length": line.Length,
+            "start": arc_a_end,
+            "end": line_end,
+        },
+        {
+            "kind": "arc",
+            "name": "entry fillet",
+            "edge": fillet_arc,
+            "length": fillet_arc.Length,
+            "start": line_end,
+            "end": q,
+        },
+    ]
+
+    return {
+        "pieces": pieces,
+        "q": q,
+        "entry_param": entry_param,
+        "transition_length": sum(piece["length"] for piece in pieces),
+        "arc_centers": [orientation_center, arc_a_center, fillet_center],
+        "orientation_arc": orientation_arc,
+        "orientation_center": orientation_center,
+        "orientation_angle": orientation_angle,
+        "orientation_end": orientation_end,
+        "arc_a": arc_a,
+        "arc_a_center": arc_a_center,
+        "arc_a_angle": arc_a_angle,
+        "perpendicular_direction": perpendicular_direction,
+        "line": line,
+        "line_length": line_length,
+        "fillet_arc": fillet_arc,
+        "fillet_center": fillet_center,
+        "fillet_angle": fillet_angle,
+        "target_direction": target_direction,
+        "target_start": target_start,
+        "target_end": target_end,
+        "start_point": start_point,
+        "start_tangent": tangent,
+        "radius": radius,
+    }
+
+
+def solve_segment_to_point(
+    source_start,
+    source_end,
+    target_point,
+    target_tangent,
+    radius,
+):
+    source_direction = unit_vector(source_end - source_start)
+    point_tangent = unit_vector(target_tangent)
+
+    transition = solve_point_to_segment(
+        target_point,
+        -point_tangent,
+        source_end,
+        source_start,
+        radius,
+    )
+
+    forward_pieces = list(transition["pieces"])
+    forward_target_run = Part.makeLine(transition["q"], source_start)
+    run_added = forward_target_run.Length > EPS
+    if run_added:
+        forward_pieces.append(
+            {
+                "kind": "duct",
+                "name": "source run",
+                "edge": forward_target_run,
+                "length": forward_target_run.Length,
+                "start": transition["q"],
+                "end": source_start,
+            }
+        )
+
+    reversed_pieces = []
+    for piece in reversed(forward_pieces):
+        edge = reverse_edge(piece["edge"])
+        reversed_pieces.append(
+            {
+                "kind": piece["kind"],
+                "name": piece["name"],
+                "edge": edge,
+                "length": edge.Length,
+                "start": piece["end"],
+                "end": piece["start"],
+            }
+        )
+
+    transition_pieces = reversed_pieces[1:] if run_added else reversed_pieces
+    return {
+        "pieces": transition_pieces,
+        "source_departure": transition["q"],
+        "source_direction": source_direction,
+        "target_point": target_point,
+        "target_tangent": point_tangent,
+        "transition": transition,
+    }
+
+
+def solve_segment_to_segment(
+    source_start,
+    source_end,
+    target_start,
+    target_end,
+    radius,
+):
+    source_direction = unit_vector(source_end - source_start)
+    target_direction = unit_vector(target_end - target_start)
+
+    source_contact, target_contact = closest_points_segments(
+        source_start,
+        source_end,
+        target_start,
+        target_end,
+    )
+    connector = target_contact - source_contact
+    connector_length = connector.Length
+    if connector_length <= 2.0 * radius + EPS:
+        raise ValueError("Common perpendicular is too short for two fillets")
+    connector_direction = unit_vector(connector)
+
+    if abs(connector_direction.dot(source_direction)) > 1e-6:
+        raise ValueError("Shortest connection is not perpendicular to the source segment")
+    if abs(connector_direction.dot(target_direction)) > 1e-6:
+        raise ValueError("Shortest connection is not perpendicular to the target segment")
+
+    source_tangent_segment = source_contact - source_direction * radius
+    source_tangent_connector = source_contact + connector_direction * radius
+    source_center = source_tangent_segment + connector_direction * radius
+
+    target_tangent_connector = target_contact - connector_direction * radius
+    target_tangent_segment = target_contact + target_direction * radius
+    target_center = target_tangent_connector + target_direction * radius
+
+    source_tangent_param = raw_segment_param(
+        (source_start, source_end),
+        source_tangent_segment,
+    )
+    target_tangent_param = raw_segment_param(
+        (target_start, target_end),
+        target_tangent_segment,
+    )
+    if source_tangent_param < -1e-9 or source_tangent_param > 1.0 + 1e-9:
+        raise ValueError("Source fillet tangent lies outside the source segment")
+    if target_tangent_param < -1e-9 or target_tangent_param > 1.0 + 1e-9:
+        raise ValueError("Target fillet tangent lies outside the target segment")
+
+    source_arc, source_angle, _ = arc_from_start_tangent(
+        source_center,
+        source_tangent_segment,
+        source_tangent_connector,
+        source_direction,
+    )
+    connector_line = Part.makeLine(source_tangent_connector, target_tangent_connector)
+    target_arc, target_angle, _ = arc_from_start_tangent(
+        target_center,
+        target_tangent_connector,
+        target_tangent_segment,
+        connector_direction,
+    )
+
+    pieces = [
+        {
+            "kind": "arc",
+            "name": "source fillet",
+            "edge": source_arc,
+            "length": source_arc.Length,
+            "start": source_tangent_segment,
+            "end": source_tangent_connector,
+        },
+        {
+            "kind": "line",
+            "name": "common perpendicular",
+            "edge": connector_line,
+            "length": connector_line.Length,
+            "start": source_tangent_connector,
+            "end": target_tangent_connector,
+        },
+        {
+            "kind": "arc",
+            "name": "target fillet",
+            "edge": target_arc,
+            "length": target_arc.Length,
+            "start": target_tangent_connector,
+            "end": target_tangent_segment,
+        },
+    ]
+
+    return {
+        "pieces": pieces,
+        "source_exit": source_tangent_segment,
+        "target_entry": target_tangent_segment,
+        "source_contact": source_contact,
+        "target_contact": target_contact,
+        "source_center": source_center,
+        "target_center": target_center,
+        "source_arc": source_arc,
+        "source_angle": source_angle,
+        "target_arc": target_arc,
+        "target_angle": target_angle,
+        "connector_line": connector_line,
+        "connector_length": connector_length,
+        "connector_direction": connector_direction,
+        "transition_length": sum(piece["length"] for piece in pieces),
+        "arc_centers": [source_center, target_center],
+    }

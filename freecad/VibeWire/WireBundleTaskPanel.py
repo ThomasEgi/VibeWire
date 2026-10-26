@@ -39,7 +39,9 @@ class WireBundleTaskPanel:
         hint = QtGui.QLabel(
             "Add independent straight bundle segments. They are not connected "
             "to each other; cables route over them and generate their own "
-            "bi-arcs between segments."
+            "bi-arcs between segments. Closed segments only connect end to end; "
+            "open segments allow entry and exit anywhere once their cable "
+            "entry/exit parameters are set."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -66,6 +68,9 @@ class WireBundleTaskPanel:
         detail_layout.addRow(
             "End:", self._label_with_button(self.end_label, self.btn_pick_end)
         )
+        self.segment_type_combo = QtGui.QComboBox()
+        self.segment_type_combo.addItems(["Closed", "Open"])
+        detail_layout.addRow("Type:", self.segment_type_combo)
         self.orientation_spin = QtGui.QDoubleSpinBox()
         self.orientation_spin.setRange(-360.0, 360.0)
         self.orientation_spin.setDecimals(1)
@@ -114,6 +119,7 @@ class WireBundleTaskPanel:
         self.start_label.clicked.connect(lambda: self.select_point("start"))
         self.end_label.clicked.connect(lambda: self.select_point("end"))
         self.btn_apply.clicked.connect(self.apply)
+        self.segment_type_combo.currentTextChanged.connect(self._on_segment_type_changed)
         self.orientation_spin.valueChanged.connect(self._on_orientation_changed)
         self.max_cables_spin.valueChanged.connect(self._on_max_cables_changed)
         self.radius_spin.valueChanged.connect(self._on_radius_changed)
@@ -153,6 +159,7 @@ class WireBundleTaskPanel:
                     "orientation": orientation,
                     "max_cables": int(getattr(segment, "MaxCables", 0) or 0),
                     "radius": segment.Radius.Value,
+                    "segment_type": getattr(segment, "SegmentType", "Closed"),
                 }
             )
         if "Gap" in self.bundle.PropertiesList:
@@ -192,6 +199,7 @@ class WireBundleTaskPanel:
                 "orientation": 0.0,
                 "max_cables": 0,
                 "radius": self.radius_spin.value(),
+                "segment_type": "Closed",
             }
         )
         self._update_list()
@@ -389,7 +397,8 @@ class WireBundleTaskPanel:
         for index, segment in enumerate(self.segments):
             start = self._point_text(segment["start"])
             end = self._point_text(segment["end"])
-            self.segment_list.addItem(f"{index + 1}: {start} -> {end}")
+            suffix = " [Open]" if segment.get("segment_type") == "Open" else ""
+            self.segment_list.addItem(f"{index + 1}: {start} -> {end}{suffix}")
         if 0 <= current < len(self.segments):
             self.segment_list.setCurrentRow(current)
         self.segment_list.blockSignals(False)
@@ -404,6 +413,7 @@ class WireBundleTaskPanel:
         self.orientation_spin.setEnabled(has_segment)
         self.max_cables_spin.setEnabled(has_segment)
         self.radius_spin.setEnabled(has_segment)
+        self.segment_type_combo.setEnabled(has_segment)
 
         if not has_segment:
             self._update_point_label(self.start_label, None)
@@ -414,11 +424,19 @@ class WireBundleTaskPanel:
             self.max_cables_spin.blockSignals(True)
             self.max_cables_spin.setValue(0)
             self.max_cables_spin.blockSignals(False)
+            self.segment_type_combo.blockSignals(True)
+            self.segment_type_combo.setCurrentText("Closed")
+            self.segment_type_combo.blockSignals(False)
             return
 
         segment = self.segments[row]
         self._update_point_label(self.start_label, segment["start"])
         self._update_point_label(self.end_label, segment["end"])
+        self.segment_type_combo.blockSignals(True)
+        self.segment_type_combo.setCurrentText(
+            segment.get("segment_type", "Closed")
+        )
+        self.segment_type_combo.blockSignals(False)
         self.orientation_spin.blockSignals(True)
         self.orientation_spin.setValue(segment.get("orientation", 0.0))
         self.orientation_spin.blockSignals(False)
@@ -438,6 +456,13 @@ class WireBundleTaskPanel:
         row = self._current_row()
         if row is not None:
             self.segments[row]["max_cables"] = int(value)
+
+    def _on_segment_type_changed(self, value):
+        row = self._current_row()
+        if row is None:
+            return
+        self.segments[row]["segment_type"] = value
+        self._update_list()
 
     def _on_radius_changed(self, value):
         row = self._current_row()
@@ -564,6 +589,7 @@ class WireBundleTaskPanel:
                     segment.Radius = float(entry.get("radius", 10.0) or 10.0)
                     segment.Orientation = entry.get("orientation", 0.0)
                     segment.MaxCables = int(entry.get("max_cables", 0) or 0)
+                    segment.SegmentType = entry.get("segment_type", "Closed")
                     update_segment_dependencies(segment)
                 else:
                     segment = create_bundle_segment(
@@ -571,6 +597,7 @@ class WireBundleTaskPanel:
                         start,
                         end,
                         radius=float(entry.get("radius", 10.0) or 10.0),
+                        segment_type=entry.get("segment_type", "Closed"),
                     )
                     segment.Orientation = entry.get("orientation", 0.0)
                     segment.MaxCables = int(entry.get("max_cables", 0) or 0)

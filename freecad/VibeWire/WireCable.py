@@ -21,7 +21,9 @@ from .WireBundle import (
     is_bundle_segment,
     is_harness,
     segment_basis,
+    segment_is_open,
 )
+from . import WireTransitions
 from .WireCreator import Segment, WireCreator
 from .WireTip import TIP_OFFSET_MARGIN, create_wire_tip
 
@@ -64,6 +66,20 @@ class WireCableProxy:
                 "SegmentDirections",
                 "Wire",
                 "Per-segment route direction (0 normal, 1 reversed)",
+            )
+        if "SegmentEntryParams" not in properties:
+            obj.addProperty(
+                "App::PropertyFloatList",
+                "SegmentEntryParams",
+                "Wire",
+                "Per-segment entry parameter (0..1 along the oriented segment)",
+            )
+        if "SegmentExitParams" not in properties:
+            obj.addProperty(
+                "App::PropertyFloatList",
+                "SegmentExitParams",
+                "Wire",
+                "Per-segment exit parameter (0..1 along the oriented segment)",
             )
         if "Harness" not in properties:
             obj.addProperty(
@@ -246,6 +262,204 @@ class WireCableProxy:
             if name not in properties:
                 obj.addProperty("App::PropertyLink", name, "Wire", description)
 
+    def _build_open_route(self, obj, route, directions):
+        lines = []
+        open_flags = []
+        entry_params = list(getattr(obj, "SegmentEntryParams", []) or [])
+        exit_params = list(getattr(obj, "SegmentExitParams", []) or [])
+        entry_params = (entry_params + [0.0] * len(route))[: len(route)]
+        exit_params = (exit_params + [1.0] * len(route))[: len(route)]
+
+        for index, segment_obj in enumerate(route):
+            if not is_bundle_segment(segment_obj):
+                raise ValueError(
+                    "Route item {} is not a bundle segment.".format(index + 1)
+                )
+            start, end = self._bundle_points(obj, segment_obj)
+            if int(directions[index]) % 2:
+                start, end = end, start
+            is_tip = index == 0 or index == len(route) - 1
+            is_open = segment_is_open(segment_obj) and not is_tip
+            lines.append((start, end))
+            open_flags.append(is_open)
+            if not is_open and not is_tip:
+                if (
+                    abs(float(entry_params[index])) > 1e-9
+                    or abs(float(exit_params[index]) - 1.0) > 1e-9
+                ):
+                    raise ValueError(
+                        "Closed bundle segment '{}' only allows an end-to-end "
+                        "connection. Set its type to Open or use the endpoints.".format(
+                            segment_obj.Label
+                        )
+                    )
+
+        if not any(open_flags):
+            return None
+
+        radius = max(4.0 * obj.Diameter.Value, obj.MinBendRadius.Value)
+        if radius <= 0.0:
+            raise ValueError(
+                "Cable diameter or minimum bend radius must be positive for open routing."
+            )
+
+        entry_points = [line[0] for line in lines]
+        exit_points = [line[1] for line in lines]
+        transitions = [None] * (len(route) - 1)
+        creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
+
+        for index in range(len(route) - 1):
+            prev_start, prev_end = lines[index]
+            next_start, next_end = lines[index + 1]
+            prev_direction = WireTransitions.unit_vector(prev_end - prev_start)
+            next_direction = WireTransitions.unit_vector(next_end - next_start)
+            prev_open = open_flags[index]
+            next_open = open_flags[index + 1]
+            try:
+                if prev_open and next_open:
+                    result = WireTransitions.solve_segment_to_segment(
+                        prev_start,
+                        prev_end,
+                        next_start,
+                        next_end,
+                        radius,
+                    )
+                    exit_points[index] = result["source_exit"]
+                    entry_points[index + 1] = result["target_entry"]
+                    transitions[index] = result["pieces"]
+                elif not prev_open and next_open:
+                    result = WireTransitions.solve_point_to_segment(
+                        prev_end,
+                        prev_direction,
+                        next_start,
+                        next_end,
+                        radius,
+                    )
+                    exit_points[index] = prev_end
+                    entry_points[index + 1] = result["q"]
+                    transitions[index] = result["pieces"]
+                elif prev_open and not next_open:
+                    result = WireTransitions.solve_segment_to_point(
+                        prev_start,
+                        prev_end,
+                        next_start,
+                        next_direction,
+                        radius,
+                    )
+                    exit_points[index] = result["source_departure"]
+                    entry_points[index + 1] = next_start
+                    transitions[index] = result["pieces"]
+                else:
+                    if (next_start - prev_end).Length > 1e-9:
+                        arcs, _, _ = creator._biarc(
+                            prev_end,
+                            prev_direction,
+                            next_start,
+                            next_direction,
+                        )
+                        transition_pieces = []
+                        for arc_index, arc in enumerate(arcs, start=1):
+                            transition_pieces.append(
+                                {
+                                    "kind": "arc",
+                                    "name": "Bi-arc {}.{}".format(
+                                        index + 1, arc_index
+                                    ),
+                                    "edge": arc,
+                                    "length": arc.Length,
+                                    "start": arc.valueAt(arc.FirstParameter),
+                                    "end": arc.valueAt(arc.LastParameter),
+                                }
+                            )
+                        transitions[index] = transition_pieces
+                    else:
+                        transitions[index] = []
+                    exit_points[index] = prev_end
+                    entry_points[index + 1] = next_start
+            except ValueError as error:
+                raise ValueError(
+                    "Open segment transition {}->{}: {}".format(
+                        index + 1,
+                        index + 2,
+                        error,
+                    )
+                )
+
+        for index, is_open in enumerate(open_flags):
+            if not is_open:
+                continue
+            entry_param = WireTransitions.raw_segment_param(
+                lines[index],
+                entry_points[index],
+            )
+            exit_param = WireTransitions.raw_segment_param(
+                lines[index],
+                exit_points[index],
+            )
+            if not (0.0 <= entry_param <= 1.0 and 0.0 <= exit_param <= 1.0):
+                raise ValueError(
+                    "Open segment {} transition points lie outside the "
+                    "segment.".format(index + 1)
+                )
+            if entry_param > exit_param + 1e-9:
+                raise ValueError(
+                    "Open segment {} entry lies after its exit. Move the "
+                    "segments farther apart or reduce the radius.".format(
+                        index + 1
+                    )
+                )
+
+        pieces = []
+        segments = []
+        for index, (line_start, line_end) in enumerate(lines):
+            run_start = entry_points[index]
+            run_end = exit_points[index]
+            run_length = (run_end - run_start).Length
+            segments.append(Segment(run_start, run_end))
+            if run_length > 1e-9:
+                pieces.append(
+                    {
+                        "kind": "duct",
+                        "name": "Segment {}".format(index + 1),
+                        "edge": Part.makeLine(run_start, run_end),
+                        "length": run_length,
+                        "start": run_start,
+                        "end": run_end,
+                    }
+                )
+            if index < len(transitions) and transitions[index]:
+                pieces.extend(transitions[index])
+
+        if not pieces:
+            raise ValueError("Open segment route does not contain any geometry.")
+
+        for index in range(len(pieces) - 1):
+            gap = (pieces[index]["end"] - pieces[index + 1]["start"]).Length
+            if gap > 1e-6:
+                raise ValueError(
+                    "Open segment route is not continuous near piece {} "
+                    "(gap {:.6f} mm).".format(index + 1, gap)
+                )
+
+        wire = Part.Wire([piece["edge"] for piece in pieces])
+        if not wire.isValid():
+            raise ValueError("Open segment route does not form a valid wire.")
+
+        for piece in pieces:
+            piece["label"] = piece.get("label", piece.get("name", "Open transition"))
+            piece["type"] = "biarc" if piece["kind"] == "arc" else "segment"
+        creator.pieces = pieces
+        creator.arcs = [
+            piece["edge"] for piece in pieces if piece["kind"] == "arc"
+        ]
+        creator.wire = wire
+        return {
+            "segments": segments,
+            "pieces": pieces,
+            "wire": wire,
+            "creator": creator,
+        }
+
     def execute(self, obj):
         if getattr(self, "_executing", False):
             return
@@ -270,24 +484,96 @@ class WireCableProxy:
         if len(directions) < len(route):
             directions.extend([0] * (len(route) - len(directions)))
 
-        segments = []
-        for index, segment_obj in enumerate(route):
-            number = index + 1
-            if not is_bundle_segment(segment_obj):
-                self._set_error(
-                    obj,
-                    f"Route item {number} is not a bundle segment. "
-                    "Rebuild legacy point routes.",
-                )
-                return
+        needs_open_routing = any(
+            index not in (0, len(route) - 1) and segment_is_open(segment_obj)
+            for index, segment_obj in enumerate(route)
+        )
+
+        if needs_open_routing:
             try:
-                segment_start, segment_end = self._bundle_points(obj, segment_obj)
+                open_route = self._build_open_route(obj, route, directions)
             except ValueError as error:
                 self._set_error(obj, str(error))
                 return
-            if int(directions[index]) % 2:
-                segment_start, segment_end = segment_end, segment_start
-            self._append_segment(segments, segment_start, segment_end)
+            if open_route is None:
+                self._set_error(obj, "Open segment route could not be built.")
+                return
+            segments = open_route["segments"]
+            full_wire = open_route["wire"]
+            creator = open_route["creator"]
+        else:
+            entry_params = list(getattr(obj, "SegmentEntryParams", []) or [])
+            exit_params = list(getattr(obj, "SegmentExitParams", []) or [])
+            entry_params = (entry_params + [0.0] * len(route))[: len(route)]
+            exit_params = (exit_params + [1.0] * len(route))[: len(route)]
+
+            segments = []
+            for index, segment_obj in enumerate(route):
+                number = index + 1
+                if not is_bundle_segment(segment_obj):
+                    self._set_error(
+                        obj,
+                        f"Route item {number} is not a bundle segment. "
+                        "Rebuild legacy point routes.",
+                    )
+                    return
+                try:
+                    segment_start, segment_end = self._bundle_points(obj, segment_obj)
+                except ValueError as error:
+                    self._set_error(obj, str(error))
+                    return
+                if int(directions[index]) % 2:
+                    segment_start, segment_end = segment_end, segment_start
+
+                is_tip_segment = index == 0 or index == len(route) - 1
+                entry_param = 0.0
+                exit_param = 1.0
+                if not is_tip_segment:
+                    entry_param = float(entry_params[index])
+                    exit_param = float(exit_params[index])
+                    if not (0.0 <= entry_param <= 1.0 and 0.0 <= exit_param <= 1.0):
+                        self._set_error(
+                            obj,
+                            f"Route item {number} entry/exit parameters must be between 0 and 1.",
+                        )
+                        return
+                    if entry_param > exit_param + 1e-9:
+                        self._set_error(
+                            obj,
+                            f"Route item {number} entry parameter must not be after its exit parameter.",
+                        )
+                        return
+
+                    is_open = segment_is_open(segment_obj)
+                    if not is_open and (
+                        abs(entry_param) > 1e-9 or abs(exit_param - 1.0) > 1e-9
+                    ):
+                        self._set_error(
+                            obj,
+                            f"Closed bundle segment '{segment_obj.Label}' only allows an "
+                            "end-to-end connection. Set its type to Open or use the endpoints.",
+                        )
+                        return
+
+                if entry_param > 1e-9 or exit_param < 1.0 - 1e-9:
+                    direction = segment_end - segment_start
+                    entry_point = segment_start + direction * entry_param
+                    exit_point = segment_start + direction * exit_param
+                else:
+                    entry_point = segment_start
+                    exit_point = segment_end
+                self._append_segment(segments, entry_point, exit_point)
+
+            if not segments:
+                self._set_error(obj, "The route does not contain any segments.")
+                return
+
+            creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
+            try:
+                full_wire = creator.create_wire(segments)
+            except Exception as error:
+                self._set_error(obj, str(error))
+                return
 
         if not segments:
             self._set_error(obj, "The route does not contain any segments.")
@@ -298,13 +584,6 @@ class WireCableProxy:
         obj.StartTipLength = start_tip_length
         obj.EndTipLength = end_tip_length
 
-        creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
-        try:
-            full_wire = creator.create_wire(segments)
-        except Exception as error:
-            self._set_error(obj, str(error))
-            return
-
         start_settings = self._tip_settings(obj, "StartTip", start_tip_length)
         end_settings = self._tip_settings(obj, "EndTip", end_tip_length)
         start_offset = start_settings["trim"]
@@ -312,18 +591,31 @@ class WireCableProxy:
         geometry_creator = creator
         geometry_wire = full_wire
         if start_offset > 0.0 or end_offset > 0.0:
-            trimmed = self._trim_route(segments, start_offset, end_offset)
-            if not trimmed:
-                self._set_error(
-                    obj, "Tip length offsets exceed the cable route length."
+            if needs_open_routing:
+                try:
+                    geometry_wire = self._trim_open_route(
+                        open_route["pieces"],
+                        start_offset,
+                        end_offset,
+                    )
+                except Exception as error:
+                    self._set_error(obj, str(error))
+                    return
+            else:
+                trimmed = self._trim_route(segments, start_offset, end_offset)
+                if not trimmed:
+                    self._set_error(
+                        obj, "Tip length offsets exceed the cable route length."
+                    )
+                    return
+                geometry_creator = WireCreator(
+                    min_bend_radius=obj.MinBendRadius.Value
                 )
-                return
-            geometry_creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
-            try:
-                geometry_wire = geometry_creator.create_wire(trimmed)
-            except Exception as error:
-                self._set_error(obj, str(error))
-                return
+                try:
+                    geometry_wire = geometry_creator.create_wire(trimmed)
+                except Exception as error:
+                    self._set_error(obj, str(error))
+                    return
 
         path_obj = obj.PathObject
         if _is_valid(path_obj, obj.Document):
@@ -674,6 +966,42 @@ class WireCableProxy:
         ]
 
     @staticmethod
+    def _trim_open_route(pieces, start_offset, end_offset):
+        trimmed = [dict(piece) for piece in pieces]
+
+        if start_offset > 0.0:
+            for piece in trimmed:
+                if piece["kind"] != "duct":
+                    continue
+                if start_offset >= piece["length"] - 1e-9:
+                    raise ValueError("Tip length offset exceeds the first run.")
+                direction = WireTransitions.unit_vector(
+                    piece["end"] - piece["start"]
+                )
+                new_start = piece["start"] + direction * start_offset
+                piece["edge"] = Part.makeLine(new_start, piece["end"])
+                piece["length"] = piece["edge"].Length
+                piece["start"] = new_start
+                break
+
+        if end_offset > 0.0:
+            for piece in reversed(trimmed):
+                if piece["kind"] != "duct":
+                    continue
+                if end_offset >= piece["length"] - 1e-9:
+                    raise ValueError("Tip length offset exceeds the last run.")
+                direction = WireTransitions.unit_vector(
+                    piece["end"] - piece["start"]
+                )
+                new_end = piece["end"] - direction * end_offset
+                piece["edge"] = Part.makeLine(piece["start"], new_end)
+                piece["length"] = piece["edge"].Length
+                piece["end"] = new_end
+                break
+
+        return Part.Wire([piece["edge"] for piece in trimmed])
+
+    @staticmethod
     def _bundle_offset(cable, bundle_segment):
         harness = getattr(cable, "Harness", None)
         if not is_harness(harness):
@@ -805,7 +1133,12 @@ class WireCableProxy:
     def onChanged(self, obj, prop):
         if prop == "Points":
             update_cable_dependencies(obj)
-        if prop in ("CableColor", "CableColorTracer"):
+        if prop in (
+            "CableColor",
+            "CableColorTracer",
+            "SegmentEntryParams",
+            "SegmentExitParams",
+        ):
             obj.touch()
         if prop == "WireSizeMM2":
             self._reset_ferrule_variants(obj)
