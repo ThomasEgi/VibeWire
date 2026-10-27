@@ -328,7 +328,7 @@ class WireCableProxy:
                     entry_points[index + 1] = result["target_entry"]
                     transitions[index] = result["pieces"]
                 elif not prev_open and next_open:
-                    result = WireTransitions.solve_point_to_segment(
+                    result = WireTransitions.solve_s5_point_to_segment(
                         prev_end,
                         prev_direction,
                         next_start,
@@ -339,7 +339,7 @@ class WireCableProxy:
                     entry_points[index + 1] = result["q"]
                     transitions[index] = result["pieces"]
                 elif prev_open and not next_open:
-                    result = WireTransitions.solve_segment_to_point(
+                    result = WireTransitions.solve_s5_segment_to_point(
                         prev_start,
                         prev_end,
                         next_start,

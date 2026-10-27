@@ -9,10 +9,9 @@ Setup order:
 The route has three open segments. The first and last are tip segments, so
 they must be treated as closed for this wire: the cable enters/leaves at the
 segment endpoints even though those segments are globally open. The middle
-open segment is routed automatically: S4 from the first tip and reversed S4
-to the last tip determine its entry/exit, and the path contains the S4
-straight connectors. Manual entry/exit parameters are ignored for open
-segments in this automatic mode.
+open segment is routed automatically: S5 from the first tip and reversed S5
+to the last tip determine its entry/exit. Manual entry/exit parameters are
+ignored for open segments in this automatic mode.
 
 Run in the FreeCAD GUI console:
     exec(open("/home/mx/opencaudetest/WirePlugin-main/snippet_archive/test_open_closed_segments.py").read())
@@ -30,7 +29,7 @@ import sys
 import FreeCAD as App
 import Part
 
-DOC_NAME = "M3_OpenClosedSegmentsTest"
+DOC_NAME = "M3_OpenClosedSegmentsS5Test"
 
 SNIPPET_DIR = (
     os.path.dirname(os.path.abspath(__file__))
@@ -107,14 +106,14 @@ def main():
     last_direction = V(1, 0, 0)
     transition_radius = max(4.0 * 4.0, 6.0)
 
-    auto_transition_1 = WireTransitions.solve_point_to_segment(
+    auto_transition_1 = WireTransitions.solve_s5_point_to_segment(
         first_end,
         first_direction,
         middle_start,
         middle_end,
         transition_radius,
     )
-    auto_transition_2 = WireTransitions.solve_segment_to_point(
+    auto_transition_2 = WireTransitions.solve_s5_segment_to_point(
         middle_start,
         middle_end,
         last_start,
@@ -199,24 +198,6 @@ def main():
             (middle_end - middle_start).Length,
         ),
     )
-    line1 = auto_transition_1["line"]
-    line2 = auto_transition_2["transition"]["line"]
-    check(
-        "first open transition contains a straight connector",
-        has_line(
-            path_shape,
-            line1.valueAt(line1.FirstParameter),
-            line1.valueAt(line1.LastParameter),
-        ),
-    )
-    check(
-        "second open transition contains a straight connector",
-        has_line(
-            path_shape,
-            line2.valueAt(line2.FirstParameter),
-            line2.valueAt(line2.LastParameter),
-        ),
-    )
     manual_entry = middle_start + (middle_end - middle_start) * 0.3
     manual_exit = middle_start + (middle_end - middle_start) * 0.7
     check(
@@ -297,14 +278,6 @@ def main():
             )
             < 1e-4,
             "{:.4f} mm".format(cable.PathObject.Shape.Length),
-        )
-        check(
-            "trimmed open path keeps the first S4 connector",
-            has_line(
-                cable.PathObject.Shape,
-                line1.valueAt(line1.FirstParameter),
-                line1.valueAt(line1.LastParameter),
-            ),
         )
         start_tip.LengthOffset = 0.0
         cable.touch()

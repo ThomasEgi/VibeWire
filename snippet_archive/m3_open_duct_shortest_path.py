@@ -298,7 +298,7 @@ def arc_edge(start, end, start_tangent):
     return Part.ArcOfCircle(circle, 0.0, angle).toShape()
 
 
-def biarc_edges(start, start_tangent, end, end_tangent):
+def biarc_edges(start, start_tangent, end, end_tangent, root_sign=1.0):
     tangent_start = unit_vector(start_tangent)
     tangent_end = unit_vector(end_tangent)
 
@@ -315,7 +315,7 @@ def biarc_edges(start, start_tangent, end, end_tangent):
         4.0 * (dot_product * dot_product - chord_length_sq * constant),
     )
     inverse_joint_scale = (
-        2.0 * dot_product + math.sqrt(discriminant)
+        2.0 * dot_product + root_sign * math.sqrt(discriminant)
     ) / (2.0 * chord_length_sq)
 
     if abs(inverse_joint_scale) < 1e-18:
@@ -716,6 +716,199 @@ def solve_biarc_line_arc(
         "pieces": pieces,
         "arc_centers": arc_centers,
     }
+
+
+def solve_s5_fixed_arc_biarc_arc(
+    start_point,
+    start_tangent,
+    target_start,
+    target_end,
+    radius,
+):
+    tangent = unit_vector(start_tangent)
+    target_direction = unit_vector(target_end - target_start)
+    target_segment = (target_start, target_end)
+
+    aim = closest_point_on_segment(target_segment, start_point)
+    q = aim + target_direction * radius
+    minimum_distance = 3.0 * radius
+
+    if (q - start_point).Length < minimum_distance - 1e-9:
+        offset = q - start_point
+        along = offset.dot(target_direction)
+        length_sq = offset.dot(offset)
+        discriminant = along * along - length_sq + 9.0 * radius * radius
+        if discriminant < 0.0:
+            raise ValueError("Cannot solve the 3R start-to-entry clearance")
+        shift = -along + math.sqrt(discriminant)
+        q = q + target_direction * shift
+        if (q - start_point).Length < minimum_distance - 1e-6:
+            raise ValueError("S5 could not reach the 3R start-to-entry clearance")
+
+    entry_distance = (q - start_point).Length
+
+    if entry_distance < 4.0 * radius - 1e-9:
+        entry_param = raw_segment_param(target_segment, q)
+        if entry_param < -1e-9 or entry_param > 1.0 + 1e-9:
+            raise ValueError("S5 direct bi-arc entry lies outside the target segment")
+
+        arcs, joint, joint_tangent = biarc_edges(
+            start_point,
+            tangent,
+            q,
+            target_direction,
+        )
+        if len(arcs) != 2:
+            raise ValueError("S5 direct bi-arc is degenerate")
+        if arcs[0].tangentAt(arcs[0].FirstParameter).dot(tangent) < 1.0 - 1e-6:
+            raise ValueError("S5 direct bi-arc does not leave the start tangentially")
+        if arcs[-1].tangentAt(arcs[-1].LastParameter).dot(target_direction) < 1.0 - 1e-6:
+            raise ValueError("S5 direct bi-arc does not enter the target tangentially")
+
+        pieces = [
+            {
+                "kind": "arc",
+                "name": "direct bi-arc 1",
+                "edge": arcs[0],
+                "length": arcs[0].Length,
+                "start": start_point,
+                "end": joint,
+            },
+            {
+                "kind": "arc",
+                "name": "direct bi-arc 2",
+                "edge": arcs[1],
+                "length": arcs[1].Length,
+                "start": joint,
+                "end": q,
+            },
+        ]
+        radii = [
+            piece["edge"].Curve.Radius
+            for piece in pieces
+            if isinstance(piece["edge"].Curve, Part.Circle)
+        ]
+        return {
+            "mode": "direct_biarc",
+            "pieces": pieces,
+            "q": q,
+            "entry_param": entry_param,
+            "transition_length": sum(piece["length"] for piece in pieces),
+            "min_radius": min(radii) if radii else None,
+            "biarc_radii": [
+                arc.Curve.Radius
+                for arc in arcs
+                if isinstance(arc.Curve, Part.Circle)
+            ],
+            "start_point": start_point,
+            "aim": aim,
+            "joint": joint,
+            "radius": radius,
+        }
+
+    first = solve_first_arc(start_point, tangent, aim, radius)
+    p1 = first["p1"]
+    direction = first["direction"]
+
+    to_p1 = p1 - aim
+    perpendicular = to_p1 - target_direction * to_p1.dot(target_direction)
+    if perpendicular.Length < 1e-9:
+        perpendicular = target_direction.cross(V(0.0, 0.0, 1.0))
+    if perpendicular.Length < 1e-9:
+        perpendicular = target_direction.cross(V(0.0, 1.0, 0.0))
+    if perpendicular.Length < 1e-9:
+        raise ValueError("Cannot determine a target normal")
+    perpendicular = unit_vector(perpendicular)
+
+    entry_param = raw_segment_param(target_segment, q)
+    if entry_param < -1e-9 or entry_param > 1.0 + 1e-9:
+        raise ValueError("Fixed-arc biarc entry lies outside the target segment")
+
+    last_aim = q - target_direction * radius
+    normal = -perpendicular
+    p2 = last_aim - normal * radius
+    center = q - normal * radius
+    last_arc, last_angle, _ = arc_from_start_tangent(
+        center,
+        p2,
+        q,
+        normal,
+    )
+    if last_arc.tangentAt(last_arc.LastParameter).dot(target_direction) < 1.0 - 1e-6:
+        raise ValueError("Last fixed arc does not meet the target tangentially")
+
+    arcs, joint, joint_tangent = biarc_edges(p1, direction, p2, normal)
+    if len(arcs) != 2:
+        raise ValueError("Single bi-arc interconnect is degenerate")
+    if arcs[-1].tangentAt(arcs[-1].LastParameter).dot(normal) < 1.0 - 1e-6:
+        raise ValueError("Single bi-arc does not meet the last fixed arc tangentially")
+
+    pieces = [
+        {
+            "kind": "arc",
+            "name": "first fixed arc",
+            "edge": first["arc"],
+            "length": first["arc"].Length,
+            "start": start_point,
+            "end": p1,
+        },
+        {
+            "kind": "arc",
+            "name": "bi-arc 1",
+            "edge": arcs[0],
+            "length": arcs[0].Length,
+            "start": p1,
+            "end": joint,
+        },
+        {
+            "kind": "arc",
+            "name": "bi-arc 2",
+            "edge": arcs[1],
+            "length": arcs[1].Length,
+            "start": joint,
+            "end": p2,
+        },
+        {
+            "kind": "arc",
+            "name": "last fixed arc",
+            "edge": last_arc,
+            "length": last_arc.Length,
+            "start": p2,
+            "end": q,
+        },
+    ]
+
+    radii = [
+        piece["edge"].Curve.Radius
+        for piece in pieces
+        if isinstance(piece["edge"].Curve, Part.Circle)
+    ]
+    min_radius = min(radii) if radii else None
+    return {
+        "mode": "fixed_arcs",
+        "pieces": pieces,
+        "q": q,
+        "entry_param": entry_param,
+        "transition_length": sum(piece["length"] for piece in pieces),
+        "min_radius": min_radius,
+        "biarc_radii": [
+            arc.Curve.Radius
+            for arc in arcs
+            if isinstance(arc.Curve, Part.Circle)
+        ],
+        "normal": normal,
+        "p2": p2,
+        "joint": joint,
+        "root_sign": 1.0,
+        "start_point": start_point,
+        "aim": aim,
+        "last_aim": last_aim,
+        "first": first,
+        "radius": radius,
+    }
+
+
+solve_s5 = solve_s5_fixed_arc_biarc_arc
 
 
 def solve_align_arc_line_arc(
