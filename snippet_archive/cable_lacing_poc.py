@@ -993,15 +993,28 @@ def _frame_at_distance(data, distance):
     return point, tangent, radial, data["radius"]
 
 
-def _section_edges_along_polyline(points, distances, start_distance, end_distance):
+def _section_edges_along_polyline(
+    points,
+    distances,
+    start_distance,
+    end_distance,
+    intermediate_points=2,
+):
+    """Approximate a lacing run with a few straight segments."""
     section_points = [_interpolate_polyline(points, distances, start_distance)]
-    for point, distance in zip(points, distances):
-        if start_distance + 1e-9 < distance < end_distance - 1e-9:
-            section_points.append(point)
+    count = max(0, int(intermediate_points))
+    for index in range(1, count + 1):
+        distance = start_distance + (end_distance - start_distance) * index / (count + 1)
+        section_points.append(_interpolate_polyline(points, distances, distance))
     section_points.append(_interpolate_polyline(points, distances, end_distance))
 
+    filtered = []
+    for point in section_points:
+        if not filtered or (point - filtered[-1]).Length > 1e-7:
+            filtered.append(point)
+
     edges = []
-    for start, end in zip(section_points, section_points[1:]):
+    for start, end in zip(filtered, filtered[1:]):
         if (end - start).Length > 1e-9:
             edges.append(Part.makeLine(start, end))
     return edges
@@ -1255,14 +1268,20 @@ def build_continuous_lacing(
         pass
     group.addObject(path_obj)
 
-    filleted = _fillet_wire(path_wire, fillet_radius)
-    first_edge = filleted.Edges[0]
-    start = first_edge.valueAt(first_edge.FirstParameter)
-    tangent = first_edge.tangentAt(first_edge.FirstParameter)
-    profile = Part.Wire(
-        [Part.Circle(start, tangent, diameter / 2.0).toShape()]
-    )
-    solid = filleted.makePipeShell([profile], True, use_frenet, 0)
+    def sweep_path(wire):
+        first_edge = wire.Edges[0]
+        start = first_edge.valueAt(first_edge.FirstParameter)
+        tangent = first_edge.tangentAt(first_edge.FirstParameter)
+        profile = Part.Wire(
+            [Part.Circle(start, tangent, diameter / 2.0).toShape()]
+        )
+        return wire.makePipeShell([profile], True, use_frenet, 0)
+
+    try:
+        filleted = _fillet_wire(path_wire, fillet_radius)
+        solid = sweep_path(filleted)
+    except Exception:
+        solid = sweep_path(path_wire)
 
     sweep_obj = document.addObject(
         "Part::Feature", "LacingContinuousSweep"
@@ -1505,6 +1524,7 @@ def build_route_lacing(
     section_gap=SECTION_GAP,
     section_factor=SECTION_FACTOR,
     use_frenet=False,
+    build_sweep=True,
 ):
     """Generate one lacing path along the complete harness route."""
     document = harness.Document
@@ -1636,27 +1656,35 @@ def build_route_lacing(
         pass
     group.addObject(path_obj)
 
-    filleted = _fillet_wire(path_wire, fillet_radius)
-    first_edge = filleted.Edges[0]
-    start = first_edge.valueAt(first_edge.FirstParameter)
-    tangent = first_edge.tangentAt(first_edge.FirstParameter)
-    profile = Part.Wire(
-        [Part.Circle(start, tangent, diameter / 2.0).toShape()]
-    )
-    solid = filleted.makePipeShell([profile], True, use_frenet, 0)
+    sweep_obj = None
+    if build_sweep:
+        def sweep_path(wire):
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            profile = Part.Wire(
+                [Part.Circle(start, tangent, diameter / 2.0).toShape()]
+            )
+            return wire.makePipeShell([profile], True, use_frenet, 0)
 
-    sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
-    sweep_obj.Label = "Continuous Lacing Sweep"
-    sweep_obj.Shape = solid
-    try:
-        sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
-        sweep_obj.ViewObject.Transparency = 0
-    except Exception:
-        pass
-    group.addObject(sweep_obj)
+        try:
+            filleted = _fillet_wire(path_wire, fillet_radius)
+            solid = sweep_path(filleted)
+        except Exception:
+            solid = sweep_path(path_wire)
+
+        sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
+        sweep_obj.Label = "Continuous Lacing Sweep"
+        sweep_obj.Shape = solid
+        try:
+            sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
+            sweep_obj.ViewObject.Transparency = 0
+        except Exception:
+            pass
+        group.addObject(sweep_obj)
 
     document.recompute()
-    return sweep_obj
+    return sweep_obj if sweep_obj is not None else path_obj
 
 
 def _solved_path_polyline(wire, arc_sample=0.5):
@@ -1665,10 +1693,13 @@ def _solved_path_polyline(wire, arc_sample=0.5):
     for edge in wire.Edges:
         if isinstance(edge.Curve, Part.Circle):
             count = max(1, int(math.ceil(edge.Length / arc_sample)))
-            samples = [
-                edge.valueAt(edge.getParameterByLength(edge.Length * i / count))
-                for i in range(count + 1)
-            ]
+            samples = []
+            for i in range(count + 1):
+                distance = edge.Length * i / count
+                distance = max(0.0, min(edge.Length, distance))
+                parameter = edge.getParameterByLength(distance)
+                parameter = max(edge.FirstParameter, min(edge.LastParameter, parameter))
+                samples.append(edge.valueAt(parameter))
         else:
             samples = [
                 edge.valueAt(edge.FirstParameter),
@@ -1701,6 +1732,7 @@ def build_solved_path_lacing(
     section_factor=SECTION_FACTOR,
     arc_sample=0.5,
     use_frenet=False,
+    build_sweep=True,
 ):
     """Generate lacing along the solved bundle centerline without helpers."""
     document = harness.Document
@@ -1828,27 +1860,35 @@ def build_solved_path_lacing(
         pass
     group.addObject(path_obj)
 
-    filleted = _fillet_wire(path_wire, fillet_radius)
-    first_edge = filleted.Edges[0]
-    start = first_edge.valueAt(first_edge.FirstParameter)
-    tangent = first_edge.tangentAt(first_edge.FirstParameter)
-    profile = Part.Wire(
-        [Part.Circle(start, tangent, diameter / 2.0).toShape()]
-    )
-    solid = filleted.makePipeShell([profile], True, use_frenet, 0)
+    sweep_obj = None
+    if build_sweep:
+        def sweep_path(wire):
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            profile = Part.Wire(
+                [Part.Circle(start, tangent, diameter / 2.0).toShape()]
+            )
+            return wire.makePipeShell([profile], True, use_frenet, 0)
 
-    sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
-    sweep_obj.Label = "Continuous Lacing Sweep"
-    sweep_obj.Shape = solid
-    try:
-        sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
-        sweep_obj.ViewObject.Transparency = 0
-    except Exception:
-        pass
-    group.addObject(sweep_obj)
+        try:
+            filleted = _fillet_wire(path_wire, fillet_radius)
+            solid = sweep_path(filleted)
+        except Exception:
+            solid = sweep_path(path_wire)
+
+        sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
+        sweep_obj.Label = "Continuous Lacing Sweep"
+        sweep_obj.Shape = solid
+        try:
+            sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
+            sweep_obj.ViewObject.Transparency = 0
+        except Exception:
+            pass
+        group.addObject(sweep_obj)
 
     document.recompute()
-    return sweep_obj
+    return sweep_obj if sweep_obj is not None else path_obj
 
 
 def visualize_bend_helpers(
@@ -2025,6 +2065,7 @@ def build_helper_aligned_lacing(
     section_gap=SECTION_GAP,
     arc_sample=0.5,
     use_frenet=False,
+    build_sweep=True,
 ):
     """Place laces at the helper segments and keep OD spacing on straights."""
     document = harness.Document
@@ -2243,27 +2284,35 @@ def build_helper_aligned_lacing(
         pass
     group.addObject(path_obj)
 
-    filleted = _fillet_wire(path_wire, fillet_radius)
-    first_edge = filleted.Edges[0]
-    start = first_edge.valueAt(first_edge.FirstParameter)
-    tangent = first_edge.tangentAt(first_edge.FirstParameter)
-    profile = Part.Wire(
-        [Part.Circle(start, tangent, diameter / 2.0).toShape()]
-    )
-    solid = filleted.makePipeShell([profile], True, use_frenet, 0)
+    sweep_obj = None
+    if build_sweep:
+        def sweep_path(wire):
+            first_edge = wire.Edges[0]
+            start = first_edge.valueAt(first_edge.FirstParameter)
+            tangent = first_edge.tangentAt(first_edge.FirstParameter)
+            profile = Part.Wire(
+                [Part.Circle(start, tangent, diameter / 2.0).toShape()]
+            )
+            return wire.makePipeShell([profile], True, use_frenet, 0)
 
-    sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
-    sweep_obj.Label = "Continuous Lacing Sweep"
-    sweep_obj.Shape = solid
-    try:
-        sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
-        sweep_obj.ViewObject.Transparency = 0
-    except Exception:
-        pass
-    group.addObject(sweep_obj)
+        try:
+            filleted = _fillet_wire(path_wire, fillet_radius)
+            solid = sweep_path(filleted)
+        except Exception:
+            solid = sweep_path(path_wire)
+
+        sweep_obj = document.addObject("Part::Feature", "LacingContinuousSweep")
+        sweep_obj.Label = "Continuous Lacing Sweep"
+        sweep_obj.Shape = solid
+        try:
+            sweep_obj.ViewObject.ShapeColor = (0.32, 0.18, 0.07)
+            sweep_obj.ViewObject.Transparency = 0
+        except Exception:
+            pass
+        group.addObject(sweep_obj)
 
     document.recompute()
-    return sweep_obj
+    return sweep_obj if sweep_obj is not None else path_obj
 
 
 def _bend_helper_frames(arc1, arc2, outer_diameter):
