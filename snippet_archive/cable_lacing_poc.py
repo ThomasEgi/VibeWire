@@ -2264,3 +2264,206 @@ def build_helper_aligned_lacing(
 
     document.recompute()
     return sweep_obj
+
+
+def _bend_helper_frames(arc1, arc2, outer_diameter):
+    count1 = _helper_count(arc1, outer_diameter)
+    count2 = _helper_count(arc2, outer_diameter)
+    frames = []
+    for index in range(1, count1):
+        distance = arc1.Length * index / count1
+        parameter = arc1.getParameterByLength(distance)
+        frames.append(
+            (
+                arc1.valueAt(parameter),
+                arc1.tangentAt(parameter).normalize(),
+                False,
+                distance,
+            )
+        )
+    joint_tangent = arc1.tangentAt(arc1.LastParameter)
+    frames.append(
+        (
+            arc1.valueAt(arc1.LastParameter),
+            joint_tangent.normalize(),
+            True,
+            arc1.Length,
+        )
+    )
+    for index in range(1, count2):
+        distance = arc2.Length * index / count2
+        parameter = arc2.getParameterByLength(distance)
+        frames.append(
+            (
+                arc2.valueAt(parameter),
+                arc2.tangentAt(parameter).normalize(),
+                False,
+                arc1.Length + distance,
+            )
+        )
+    return frames
+
+
+def _new_lace_node(document, bend_index, helper_index, side, point):
+    name = "LaceHelperNode_{:02d}_{:03d}_{}".format(
+        bend_index + 1, helper_index, side
+    )
+    obj = document.addObject("App::Part", name)
+    obj.Label = "Lace Helper {:02d}.{:03d} {}".format(
+        bend_index + 1, helper_index, side
+    )
+    obj.Placement.Base = point
+    return obj
+
+
+def route_cables_along_lace_helpers(
+    harness,
+    helper_length=HELPER_LENGTH,
+    min_bend_radius=MIN_BEND_RADIUS,
+):
+    """Insert the sparse lace helpers into the harness route for the cables."""
+    from VibeWire import WireBundle
+    from VibeWire.WireCreator import Segment, WireCreator
+
+    document = harness.Document
+    document.recompute()
+    all_segments = list(harness.Segments)
+    original = [
+        segment
+        for segment in all_segments
+        if segment.Label.startswith("Route Segment ")
+    ]
+    original.sort(key=lambda segment: int(segment.Label.split()[-1]))
+    if len(original) < 2:
+        return original
+
+    cables = [
+        obj
+        for obj in document.Objects
+        if getattr(getattr(obj, "Proxy", None), "Type", None) == "WireCable"
+    ]
+    for cable in cables:
+        cable.Points = original
+        cable.SegmentDirections = [0] * len(original)
+
+    old_helpers = [
+        segment for segment in all_segments if segment not in original
+    ]
+    for segment in old_helpers:
+        WireBundle.remove_bundle_segment(harness, segment)
+
+    old_node_names = []
+    for obj in list(document.Objects):
+        if obj.TypeId != "App::Part":
+            continue
+        if obj.Name.startswith(("LaceHelperNode_", "BendNode_")):
+            old_node_names.append(obj.Name)
+    for name in old_node_names:
+        if document.getObject(name) is not None:
+            document.removeObject(name)
+
+    route = [
+        Segment(
+            segment.Start.getGlobalPlacement().Base,
+            segment.End.getGlobalPlacement().Base,
+        )
+        for segment in original
+    ]
+    solved = WireCreator(min_bend_radius=min_bend_radius).create_wire(route)
+    bends = []
+    current = []
+    for edge in solved.Edges:
+        if isinstance(edge.Curve, Part.Circle):
+            current.append(edge)
+        elif current:
+            bends.append(current)
+            current = []
+    if current:
+        bends.append(current)
+    if len(bends) != len(original) - 1:
+        harness.Segments = original
+        for cable in cables:
+            cable.Points = original
+            cable.SegmentDirections = [0] * len(original)
+        document.recompute()
+        raise ValueError(
+            "Expected {} bends, found {}".format(
+                len(original) - 1, len(bends)
+            )
+        )
+
+    radius = max(_bundle_outer_radius(segment) for segment in original)
+    outer_diameter = 2.0 * radius
+    new_order = [original[0]]
+    for bend_index, bend_edges in enumerate(bends):
+        if len(bend_edges) != 2:
+            raise ValueError("Only bi-arc bends are supported")
+        arc1, arc2 = bend_edges
+        frames = _bend_helper_frames(arc1, arc2, outer_diameter)
+
+        start_angle = original[bend_index].Orientation.Value
+        end_angle = original[bend_index + 1].Orientation.Value
+        angle_delta = ((end_angle - start_angle + 180.0) % 360.0) - 180.0
+        if frames:
+            first_distance = frames[0][3]
+            last_distance = frames[-1][3]
+            distance_span = last_distance - first_distance
+        else:
+            distance_span = 0.0
+
+        helper_records = []
+        for helper_index, (center, tangent, shared, distance) in enumerate(
+            frames, start=1
+        ):
+            start_point = center - tangent * (helper_length / 2.0)
+            end_point = center + tangent * (helper_length / 2.0)
+            start_node = _new_lace_node(
+                document,
+                bend_index,
+                helper_index,
+                "Start",
+                start_point,
+            )
+            end_node = _new_lace_node(
+                document,
+                bend_index,
+                helper_index,
+                "End",
+                end_point,
+            )
+            helper = WireBundle.create_bundle_segment(
+                harness,
+                start_node,
+                end_node,
+                radius=original[bend_index].Radius.Value,
+            )
+            helper.Label = "Lace Helper {:02d}.{:03d}".format(
+                bend_index + 1, helper_index
+            )
+            if distance_span < 1e-9:
+                fraction = 0.5
+            else:
+                fraction = (distance - first_distance) / distance_span
+            helper.Orientation = start_angle + angle_delta * fraction
+            try:
+                helper.ViewObject.ShapeColor = (
+                    (0.0, 0.75, 0.0) if shared else (1.0, 0.0, 0.0)
+                )
+                helper.ViewObject.Transparency = 80
+                helper.ViewObject.Visibility = False
+            except Exception:
+                pass
+            helper_records.append((start_node, end_node, helper))
+
+        for _start_node, _end_node, helper in helper_records:
+            new_order.append(helper)
+        new_order.append(original[bend_index + 1])
+
+    harness.Segments = new_order
+    WireBundle.ensure_segment_group(harness)
+    for cable in cables:
+        cable.Points = new_order
+        cable.SegmentDirections = [0] * len(new_order)
+        WireBundle.add_cable_to_harness(harness, cable)
+    document.recompute()
+    return new_order
