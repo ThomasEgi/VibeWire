@@ -1,10 +1,10 @@
 """Geometric transitions for open bundle-segment routing.
 
-The solvers here are the tested M3 primitives:
+The active M3 primitives are:
 
-- point -> segment: solution 4 (alignment arc, 90 degree arc, perpendicular
-  line, 90 degree fillet),
-- segment -> point: the same solver with reversed inputs and a reversed path,
+- point -> segment: S5 (first fixed arc, single bi-arc, fixed fillet) with a
+  direct bi-arc fallback below 4R and an entry push below 3R,
+- segment -> point: S5 with reversed inputs and a reversed path,
 - segment -> segment: common perpendicular plus two 90 degree fillets.
 
 All returned paths are lists of pieces with edge, length, start and end keys.
@@ -452,161 +452,17 @@ def reverse_edge(edge):
     )
 
 
-def solve_point_to_segment(
-    start_point,
-    start_tangent,
-    target_start,
-    target_end,
-    radius,
-):
-    tangent = unit_vector(start_tangent)
-    target_direction = unit_vector(target_end - target_start)
-    target_length = (target_end - target_start).Length
-    cosine = clamp(tangent.dot(target_direction), -1.0, 1.0)
-    turn = math.acos(cosine)
-
-    if turn < 1e-6:
-        raise ValueError("Start tangent is already parallel to the target")
-    if turn > math.pi - 1e-6:
-        raise ValueError("Start tangent is anti-parallel to the target")
-
-    side = unit_vector(target_direction - tangent * cosine)
-    orientation_center = start_point + side * radius
-    orientation_end = (
-        start_point
-        + tangent * (radius * math.sin(turn))
-        + side * (radius * (1.0 - math.cos(turn)))
-    )
-    orientation_arc, orientation_angle, _ = arc_from_start_tangent(
-        orientation_center,
-        start_point,
-        orientation_end,
-        tangent,
-    )
-
-    foot_param = (orientation_end - target_start).dot(target_direction)
-    foot_point = target_start + target_direction * foot_param
-    to_target = foot_point - orientation_end
-    distance = to_target.Length
-    if distance < 1e-9:
-        raise ValueError("Alignment end lies on the target line")
-    perpendicular_direction = unit_vector(to_target)
-    if distance <= 2.0 * radius + 1e-9:
-        raise ValueError("Perpendicular line would have non-positive length")
-
-    arc_a_center = orientation_end + perpendicular_direction * radius
-    arc_a_end = (
-        orientation_end
-        + target_direction * radius
-        + perpendicular_direction * radius
-    )
-    arc_a, arc_a_angle, _ = arc_from_start_tangent(
-        arc_a_center,
-        orientation_end,
-        arc_a_end,
-        target_direction,
-    )
-
-    line_end = (
-        foot_point
-        + target_direction * radius
-        - perpendicular_direction * radius
-    )
-    line = Part.makeLine(arc_a_end, line_end)
-    line_length = (line_end - arc_a_end).dot(perpendicular_direction)
-    if line_length <= 1e-9:
-        raise ValueError("Perpendicular line is degenerate")
-
-    q = foot_point + target_direction * (2.0 * radius)
-    entry_param = raw_segment_param((target_start, target_end), q)
-    if entry_param < -1e-9 or entry_param > 1.0 + 1e-9:
-        raise ValueError("Perpendicular transition entry lies outside the target segment")
-
-    fillet_center = q - perpendicular_direction * radius
-    fillet_arc, fillet_angle, _ = arc_from_start_tangent(
-        fillet_center,
-        line_end,
-        q,
-        perpendicular_direction,
-    )
-
-    pieces = [
-        {
-            "kind": "arc",
-            "name": "orientation arc",
-            "edge": orientation_arc,
-            "length": orientation_arc.Length,
-            "start": start_point,
-            "end": orientation_end,
-        },
-        {
-            "kind": "arc",
-            "name": "perpendicular turn arc",
-            "edge": arc_a,
-            "length": arc_a.Length,
-            "start": orientation_end,
-            "end": arc_a_end,
-        },
-        {
-            "kind": "line",
-            "name": "perpendicular line",
-            "edge": line,
-            "length": line.Length,
-            "start": arc_a_end,
-            "end": line_end,
-        },
-        {
-            "kind": "arc",
-            "name": "entry fillet",
-            "edge": fillet_arc,
-            "length": fillet_arc.Length,
-            "start": line_end,
-            "end": q,
-        },
-    ]
-
-    return {
-        "pieces": pieces,
-        "q": q,
-        "entry_param": entry_param,
-        "transition_length": sum(piece["length"] for piece in pieces),
-        "arc_centers": [orientation_center, arc_a_center, fillet_center],
-        "orientation_arc": orientation_arc,
-        "orientation_center": orientation_center,
-        "orientation_angle": orientation_angle,
-        "orientation_end": orientation_end,
-        "arc_a": arc_a,
-        "arc_a_center": arc_a_center,
-        "arc_a_angle": arc_a_angle,
-        "perpendicular_direction": perpendicular_direction,
-        "line": line,
-        "line_length": line_length,
-        "fillet_arc": fillet_arc,
-        "fillet_center": fillet_center,
-        "fillet_angle": fillet_angle,
-        "target_direction": target_direction,
-        "target_start": target_start,
-        "target_end": target_end,
-        "start_point": start_point,
-        "start_tangent": tangent,
-        "radius": radius,
-    }
-
-
-def solve_segment_to_point(
+def solve_s5_segment_to_point(
     source_start,
     source_end,
     target_point,
     target_tangent,
     radius,
-    point_solver=None,
 ):
-    if point_solver is None:
-        point_solver = solve_point_to_segment
     source_direction = unit_vector(source_end - source_start)
     point_tangent = unit_vector(target_tangent)
 
-    transition = point_solver(
+    transition = solve_s5_point_to_segment(
         target_point,
         -point_tangent,
         source_end,
@@ -652,23 +508,6 @@ def solve_segment_to_point(
         "target_tangent": point_tangent,
         "transition": transition,
     }
-
-
-def solve_s5_segment_to_point(
-    source_start,
-    source_end,
-    target_point,
-    target_tangent,
-    radius,
-):
-    return solve_segment_to_point(
-        source_start,
-        source_end,
-        target_point,
-        target_tangent,
-        radius,
-        point_solver=solve_s5_point_to_segment,
-    )
 
 
 def solve_segment_to_segment(

@@ -298,7 +298,7 @@ def arc_edge(start, end, start_tangent):
     return Part.ArcOfCircle(circle, 0.0, angle).toShape()
 
 
-def biarc_edges(start, start_tangent, end, end_tangent, root_sign=1.0):
+def biarc_edges(start, start_tangent, end, end_tangent):
     tangent_start = unit_vector(start_tangent)
     tangent_end = unit_vector(end_tangent)
 
@@ -315,7 +315,7 @@ def biarc_edges(start, start_tangent, end, end_tangent, root_sign=1.0):
         4.0 * (dot_product * dot_product - chord_length_sq * constant),
     )
     inverse_joint_scale = (
-        2.0 * dot_product + root_sign * math.sqrt(discriminant)
+        2.0 * dot_product + math.sqrt(discriminant)
     ) / (2.0 * chord_length_sq)
 
     if abs(inverse_joint_scale) < 1e-18:
@@ -899,7 +899,6 @@ def solve_s5_fixed_arc_biarc_arc(
         "normal": normal,
         "p2": p2,
         "joint": joint,
-        "root_sign": 1.0,
         "start_point": start_point,
         "aim": aim,
         "last_aim": last_aim,
