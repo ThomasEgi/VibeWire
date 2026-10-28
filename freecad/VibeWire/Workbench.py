@@ -27,7 +27,10 @@ class VibeWireWorkbench(FreeCADGui.Workbench):
         import freecad.VibeWire.VibeWireCmd  # noqa: F401
 
         wire_cmds = ["VibeWire_CreateWire"]
-        bundle_cmds = ["VibeWire_DefineHarness"]
+        bundle_cmds = [
+            "VibeWire_DefineHarness",
+            "VibeWire_RegenerateLaceHelpers",
+        ]
         self.appendToolbar("Wire", wire_cmds)
         self.appendToolbar("Harness", bundle_cmds)
         self.appendMenu("VibeWire", wire_cmds + bundle_cmds)
@@ -51,8 +54,12 @@ class VibeWireWorkbench(FreeCADGui.Workbench):
                 "VibeWire_EditHarness",
                 "VibeWire_MoveSegmentStart",
                 "VibeWire_MoveSegmentEnd",
+                "VibeWire_RegenerateLaceHelpers",
             ],
-            "WireHarness": ["VibeWire_EditHarness"],
+            "WireHarness": [
+                "VibeWire_EditHarness",
+                "VibeWire_RegenerateLaceHelpers",
+            ],
         }.get(kind)
         if commands:
             self.appendContextMenu("", "Separator")

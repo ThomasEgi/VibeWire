@@ -608,9 +608,10 @@ class WireBundleTaskPanel:
                 if segment not in panel_objects:
                     remove_bundle_segment(self.bundle, segment)
             self.bundle.Segments = panel_objects
-            from .WireBundle import ensure_segment_group
+            from .WireBundle import ensure_helper_group, ensure_segment_group
 
             ensure_segment_group(self.bundle)
+            ensure_helper_group(self.bundle)
         except Exception as error:
             QtGui.QMessageBox.critical(self.form, "VibeWire", str(error))
             return

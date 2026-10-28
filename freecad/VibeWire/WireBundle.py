@@ -9,6 +9,8 @@ import Part
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 BUNDLE_SEGMENT_TYPE = "WireBundleSegment"
+ROUTE_SEGMENT_ROLE = "Route"
+LACE_HELPER_ROLE = "Lace Helper"
 
 
 def is_bundle_segment(obj):
@@ -19,6 +21,13 @@ def is_bundle_segment(obj):
 def segment_is_open(segment):
     """Return True when a bundle segment allows arbitrary wire entry/exit."""
     return getattr(segment, "SegmentType", "Closed") == "Open"
+
+
+def is_lace_helper(obj):
+    """Return True for auto-generated lace helper segments."""
+    if getattr(obj, "SegmentRole", None) == LACE_HELPER_ROLE:
+        return True
+    return getattr(obj, "Label", "").startswith("Lace Helper ")
 
 
 class WireHarnessProxy:
@@ -45,6 +54,13 @@ class WireHarnessProxy:
                 "SegmentGroup",
                 "Harness",
                 "Group containing the harness bundle segments",
+            )
+        if "HelperGroup" not in properties:
+            obj.addProperty(
+                "App::PropertyLink",
+                "HelperGroup",
+                "Harness",
+                "Group containing the lace helper segments",
             )
         if "CableOrder" not in properties:
             obj.addProperty(
@@ -159,6 +175,7 @@ class WireHarnessProxy:
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
         ensure_segment_group(obj)
+        ensure_helper_group(obj)
         if "Cables" in obj.PropertiesList:
             try:
                 obj.removeProperty("Cables")
@@ -379,8 +396,13 @@ class ViewProviderWireBundle:
         obj = getattr(self, "Object", None)
         if obj is None:
             return []
-        group = getattr(obj, "SegmentGroup", None)
-        children = [group] if group is not None and group.isValid() else list(obj.Segments)
+        children = []
+        for property_name in ("SegmentGroup", "HelperGroup"):
+            group = getattr(obj, property_name, None)
+            if group is not None and group.isValid() and group not in children:
+                children.append(group)
+        if not children:
+            children = list(obj.Segments)
         try:
             from .WireCable import find_container
 
@@ -437,8 +459,11 @@ class ViewProviderWireBundle:
         segment_names = [
             segment.Name for segment in obj.Segments if segment.isValid()
         ]
-        group = getattr(obj, "SegmentGroup", None)
-        group_name = group.Name if group is not None and group.isValid() else None
+        group_names = []
+        for property_name in ("SegmentGroup", "HelperGroup"):
+            group = getattr(obj, property_name, None)
+            if group is not None and group.isValid():
+                group_names.append(group.Name)
 
         def cleanup():
             doc = App.getDocument(document_name)
@@ -450,11 +475,12 @@ class ViewProviderWireBundle:
                         doc.removeObject(name)
                     except Exception:
                         pass
-            if group_name and doc.getObject(group_name) is not None:
-                try:
-                    doc.removeObject(group_name)
-                except Exception:
-                    pass
+            for group_name in group_names:
+                if doc.getObject(group_name) is not None:
+                    try:
+                        doc.removeObject(group_name)
+                    except Exception:
+                        pass
 
         try:
             from PySide import QtCore
@@ -519,6 +545,16 @@ class WireBundleSegmentProxy:
             )
             obj.SegmentType = ["Closed", "Open"]
             obj.SegmentType = "Closed"
+        if "SegmentRole" not in obj.PropertiesList:
+            role = LACE_HELPER_ROLE if obj.Label.startswith("Lace Helper ") else ROUTE_SEGMENT_ROLE
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "SegmentRole",
+                "Segment",
+                "Route = user routing segment; Lace Helper = auto-generated helper",
+            )
+            obj.SegmentRole = [ROUTE_SEGMENT_ROLE, LACE_HELPER_ROLE]
+            obj.SegmentRole = role
         if "Dependencies" not in obj.PropertiesList:
             obj.addProperty(
                 "App::PropertyLinkListGlobal",
@@ -645,10 +681,40 @@ def ensure_segment_group(harness):
         group = document.addObject("App::DocumentObjectGroup", name)
         group.Label = "Segments"
         harness.SegmentGroup = group
-    desired = list(harness.Segments)
+    desired = [
+        segment for segment in harness.Segments if not is_lace_helper(segment)
+    ]
     current = list(group.Group)
     if current != desired:
         group.Group = desired
+    return group
+
+
+def ensure_helper_group(harness):
+    if harness is None or harness.Document is None:
+        return None
+    document = harness.Document
+    group = getattr(harness, "HelperGroup", None)
+    if group is None or not group.isValid() or group.Document is not document:
+        name = "LaceHelpers"
+        index = 1
+        while document.getObject(name) is not None:
+            name = f"LaceHelpers{index:03d}"
+            index += 1
+        group = document.addObject("App::DocumentObjectGroup", name)
+        group.Label = "Lace Helpers"
+        harness.HelperGroup = group
+    desired = [
+        segment for segment in harness.Segments if is_lace_helper(segment)
+    ]
+    desired_set = set(desired)
+    for child in list(group.Group):
+        if is_bundle_segment(child) and child not in desired_set:
+            group.removeObject(child)
+    current_names = {child.Name for child in group.Group}
+    for segment in desired:
+        if segment.Name not in current_names:
+            group.addObject(segment)
     return group
 
 
@@ -657,6 +723,7 @@ def create_wire_harness(document, label="Harness"):
     harness.Label = label
     WireHarnessProxy(harness)
     ensure_segment_group(harness)
+    ensure_helper_group(harness)
     if App.GuiUp:
         ViewProviderWireHarness(harness.ViewObject)
     return harness
@@ -688,6 +755,7 @@ def create_bundle_segment(bundle, start, end, radius=10.0, segment_type="Closed"
     segments.append(segment)
     bundle.Segments = segments
     ensure_segment_group(bundle)
+    ensure_helper_group(bundle)
     return segment
 
 
@@ -695,6 +763,7 @@ def remove_bundle_segment(bundle, segment):
     segments = [item for item in bundle.Segments if item is not segment]
     bundle.Segments = segments
     ensure_segment_group(bundle)
+    ensure_helper_group(bundle)
     document = bundle.Document
     if document.getObject(segment.Name) is segment:
         document.removeObject(segment.Name)

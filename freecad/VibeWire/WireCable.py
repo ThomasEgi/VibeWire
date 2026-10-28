@@ -20,6 +20,7 @@ from .WireBundle import (
     ancestor_groups,
     is_bundle_segment,
     is_harness,
+    is_lace_helper,
     segment_basis,
     segment_is_open,
 )
@@ -507,7 +508,7 @@ class WireCableProxy:
             entry_params = (entry_params + [0.0] * len(route))[: len(route)]
             exit_params = (exit_params + [1.0] * len(route))[: len(route)]
 
-            segments = []
+            runs = []
             for index, segment_obj in enumerate(route):
                 number = index + 1
                 if not is_bundle_segment(segment_obj):
@@ -562,11 +563,78 @@ class WireCableProxy:
                 else:
                     entry_point = segment_start
                     exit_point = segment_end
-                self._append_segment(segments, entry_point, exit_point)
+                if (exit_point - entry_point).Length >= 1e-9:
+                    runs.append(
+                        {
+                            "start": entry_point,
+                            "end": exit_point,
+                            "segment": segment_obj,
+                        }
+                    )
 
-            if not segments:
+            if not runs:
                 self._set_error(obj, "The route does not contain any segments.")
                 return
+
+            def run_center(run):
+                return (run["start"] + run["end"]) / 2.0
+
+            def control_point(run, at_end):
+                if is_lace_helper(run["segment"]):
+                    return run_center(run)
+                return run["end"] if at_end else run["start"]
+
+            segments = []
+            for index, run in enumerate(runs):
+                if not is_lace_helper(run["segment"]):
+                    segments.append(Segment(run["start"], run["end"]))
+                    continue
+
+                current = run_center(run)
+                length = (run["end"] - run["start"]).Length
+                tangent = run["end"] - run["start"]
+                if tangent.Length < 1e-9 or length < 1e-9:
+                    segments.append(Segment(run["start"], run["end"]))
+                    continue
+                tangent = tangent / tangent.Length
+
+                previous_point = (
+                    control_point(runs[index - 1], True) if index > 0 else None
+                )
+                next_point = (
+                    control_point(runs[index + 1], False)
+                    if index + 1 < len(runs)
+                    else None
+                )
+
+                forward = (
+                    next_point - current if next_point is not None else tangent
+                )
+                if forward.Length < 1e-9:
+                    forward = tangent
+                else:
+                    forward = forward / forward.Length
+                backward = (
+                    current - previous_point
+                    if previous_point is not None
+                    else forward
+                )
+                if backward.Length < 1e-9:
+                    backward = forward
+                else:
+                    backward = backward / backward.Length
+                averaged = backward + forward
+                if averaged.Length < 1e-9:
+                    averaged = forward
+                else:
+                    averaged = averaged / averaged.Length
+
+                segments.append(
+                    Segment(
+                        current - averaged * (length / 2.0),
+                        current + averaged * (length / 2.0),
+                    )
+                )
 
             creator = WireCreator(min_bend_radius=obj.MinBendRadius.Value)
             try:

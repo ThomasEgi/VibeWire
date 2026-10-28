@@ -2467,3 +2467,714 @@ def route_cables_along_lace_helpers(
         WireBundle.add_cable_to_harness(harness, cable)
     document.recompute()
     return new_order
+
+
+def _segment_cable_offset(harness, cable, segment):
+    raw = harness.Layout.get("{}|{}".format(segment.Name, cable.Name))
+    if not raw:
+        return App.Vector(0.0, 0.0, 0.0)
+    return App.Vector(*[float(value) for value in raw.split(",")])
+
+
+def make_spline_cable_test(
+    harness,
+    sample_step=20.0,
+    use_frenet=True,
+    hide_original=True,
+    spline_mode="approximate",
+):
+    """Prototype smooth spline cables through the helper center points."""
+    from VibeWire.WireColors import color_rgb
+
+    document = harness.Document
+    document.recompute()
+    cables = [
+        obj
+        for obj in document.Objects
+        if getattr(getattr(obj, "Proxy", None), "Type", None) == "WireCable"
+    ]
+    group_name = "SplineCableTest_{}".format(harness.Name)
+    _safe_remove_group(document, group_name)
+    group = document.addObject("App::DocumentObjectGroup", group_name)
+    group.Label = "Spline Cable Test - {}".format(harness.Label)
+
+    results = []
+    for cable in cables:
+        control_points = []
+        for segment in cable.Points:
+            start = segment.Start.getGlobalPlacement().Base
+            end = segment.End.getGlobalPlacement().Base
+            offset = _segment_cable_offset(harness, cable, segment)
+            if segment.Label.startswith("Lace Helper"):
+                point = (start + end) / 2.0 + offset
+                if (
+                    not control_points
+                    or (point - control_points[-1]).Length > 1e-7
+                ):
+                    control_points.append(point)
+                continue
+
+            delta = end - start
+            length = delta.Length
+            if length < 1e-9:
+                continue
+            direction = delta / length
+            count = max(1, int(math.ceil(length / max(sample_step, 1e-6))))
+            for index in range(count + 1):
+                point = start + direction * (length * index / count) + offset
+                if (
+                    not control_points
+                    or (point - control_points[-1]).Length > 1e-7
+                ):
+                    control_points.append(point)
+
+        if len(control_points) < 3:
+            continue
+
+        curve = Part.BSplineCurve()
+        if spline_mode == "interpolate":
+            curve.interpolate(Points=control_points)
+        else:
+            curve.approximate(
+                Points=control_points,
+                ParamType="Centripetal",
+                Tolerance=0.05,
+                DegMin=3,
+                DegMax=8,
+            )
+        path_wire = Part.Wire([curve.toShape()])
+        first_edge = path_wire.Edges[0]
+        start = first_edge.valueAt(first_edge.FirstParameter)
+        tangent = first_edge.tangentAt(first_edge.FirstParameter)
+        profile = Part.Wire(
+            [Part.Circle(start, tangent, cable.Diameter.Value / 2.0).toShape()]
+        )
+        try:
+            solid = path_wire.makePipeShell([profile], True, use_frenet, 0)
+        except Exception as error:
+            print("spline sweep failed for", cable.Name, error)
+            continue
+
+        obj = document.addObject(
+            "Part::Feature", "SplineCable_{}".format(cable.Name)
+        )
+        obj.Label = "Spline Cable {}".format(cable.CableColor)
+        obj.Shape = solid
+        rgb = color_rgb(cable.CableColor)
+        if rgb is not None:
+            try:
+                obj.ViewObject.ShapeColor = rgb
+            except Exception:
+                pass
+        group.addObject(obj)
+        results.append(obj)
+
+    if hide_original:
+        for cable in cables:
+            try:
+                cable.ViewObject.Visibility = False
+            except Exception:
+                pass
+
+    document.recompute()
+    return group
+
+
+def visualize_spiral_option_a(
+    harness,
+    helper_a_label="Lace Helper 03.003",
+    helper_b_label="Lace Helper 03.004",
+    cable_name="Cable01",
+    normal_length=20.0,
+    segment_length=1.0,
+):
+    """Visualise the spiral angle and normal at one helper transition."""
+    document = harness.Document
+    document.recompute()
+    cable = document.getObject(cable_name)
+    if cable is None or getattr(getattr(cable, "Proxy", None), "Type", None) != "WireCable":
+        raise ValueError("Cable not found: {}".format(cable_name))
+
+    helper_a = None
+    helper_b = None
+    for segment in harness.Segments:
+        if segment.Label == helper_a_label:
+            helper_a = segment
+        elif segment.Label == helper_b_label:
+            helper_b = segment
+    if helper_a is None or helper_b is None:
+        raise ValueError("Helper segments not found")
+
+    def helper_center(segment):
+        return (
+            segment.Start.getGlobalPlacement().Base
+            + segment.End.getGlobalPlacement().Base
+        ) / 2.0
+
+    center_a = helper_center(helper_a)
+    center_b = helper_center(helper_b)
+    tangent_a = (
+        helper_a.End.getGlobalPlacement().Base
+        - helper_a.Start.getGlobalPlacement().Base
+    ).normalize()
+    offset_a = _segment_cable_offset(harness, cable, helper_a)
+    offset_b = _segment_cable_offset(harness, cable, helper_b)
+    radius_a = offset_a.Length
+    normal_a = offset_a / radius_a if radius_a > 1e-9 else tangent_a.cross(App.Vector(0, 0, 1)).normalize()
+    normal_b = offset_b / offset_b.Length if offset_b.Length > 1e-9 else normal_a
+    point_a = center_a + offset_a
+    point_b = center_b + offset_b
+    chord = point_b - point_a
+    chord_length = chord.Length
+    if chord_length < 1e-9:
+        raise ValueError("Helper control points coincide")
+    rotated_direction = chord / chord_length
+
+    angle_delta = math.radians(
+        helper_b.Orientation.Value - helper_a.Orientation.Value
+    )
+    distance_between = (center_b - center_a).Length
+    spiral_angle_local = math.degrees(
+        math.atan2(radius_a * angle_delta, distance_between)
+    )
+    tangent_projection = rotated_direction.dot(tangent_a)
+    radial_projection = rotated_direction.dot(normal_a)
+    tangential_direction = tangent_a.cross(normal_a)
+    if tangential_direction.Length < 1e-9:
+        tangential_direction = App.Vector(0, 0, 1)
+    else:
+        tangential_direction = tangential_direction.normalize()
+    tangential_projection = rotated_direction.dot(tangential_direction)
+    spiral_angle_chord = math.degrees(
+        math.atan2(tangential_projection, tangent_projection)
+    )
+
+    group_name = "SpiralOptionA_{}".format(harness.Name)
+    _safe_remove_group(document, group_name)
+    group = document.addObject("App::DocumentObjectGroup", group_name)
+    group.Label = "Spiral Option A - {}".format(harness.Label)
+
+    def add_line(name, label, start, end, color, width=3.0):
+        obj = document.addObject("Part::Feature", name)
+        obj.Label = label
+        obj.Shape = Part.makeLine(start, end)
+        try:
+            obj.ViewObject.LineColor = color
+            obj.ViewObject.LineWidth = width
+        except Exception:
+            pass
+        group.addObject(obj)
+        return obj
+
+    half = segment_length / 2.0
+    add_line(
+        "SpiralOptionA_Original_{}".format(cable_name),
+        "Spiral A - original cable direction",
+        point_a - tangent_a * half,
+        point_a + tangent_a * half,
+        (0.35, 0.35, 0.35),
+    )
+    add_line(
+        "SpiralOptionA_Rotated_{}".format(cable_name),
+        "Spiral A - rotated cable segment",
+        point_a - rotated_direction * half,
+        point_a + rotated_direction * half,
+        (0.1, 0.35, 0.95),
+    )
+    add_line(
+        "SpiralOptionA_NormalA_{}".format(cable_name),
+        "Spiral A - normal at helper A",
+        point_a,
+        point_a + normal_a * normal_length,
+        (0.85, 0.1, 0.75),
+    )
+    add_line(
+        "SpiralOptionA_NormalB_{}".format(cable_name),
+        "Spiral A - normal at helper B",
+        point_b,
+        point_b + normal_b * normal_length,
+        (0.1, 0.75, 0.85),
+    )
+    add_line(
+        "SpiralOptionA_Tangential_{}".format(cable_name),
+        "Spiral A - tangential direction A",
+        point_a,
+        point_a + tangential_direction * normal_length,
+        (0.85, 0.75, 0.1),
+    )
+
+    document.recompute()
+    print("Option A diagnostic")
+    print("  helper A:", helper_a.Label, "orientation %.3f" % helper_a.Orientation.Value)
+    print("  helper B:", helper_b.Label, "orientation %.3f" % helper_b.Orientation.Value)
+    print("  cable:", cable.Name, cable.CableColor)
+    print("  center distance: %.4f mm" % distance_between)
+    print("  lane radius: %.4f mm" % radius_a)
+    print("  orientation step: %.4f deg" % math.degrees(angle_delta))
+    print("  local spiral angle: %.4f deg" % spiral_angle_local)
+    print("  chord spiral angle: %.4f deg" % spiral_angle_chord)
+    print("  chord components (tangent, radial, tangential): %.4f, %.4f, %.4f" % (tangent_projection, radial_projection, tangential_projection))
+    return group
+
+
+def visualize_spiral_option_a_all(
+    harness,
+    helper_a_label="Lace Helper 03.003",
+    helper_b_label="Lace Helper 03.004",
+    helper_prev_label=None,
+    normal_length=20.0,
+    segment_length=20.0,
+):
+    """Visualise option A using averaged backward and forward directions."""
+    from VibeWire.WireColors import color_rgb
+
+    document = harness.Document
+    document.recompute()
+    helper_a = None
+    helper_b = None
+    for segment in harness.Segments:
+        if segment.Label == helper_a_label:
+            helper_a = segment
+        elif segment.Label == helper_b_label:
+            helper_b = segment
+    if helper_a is None or helper_b is None:
+        raise ValueError("Helper segments not found")
+
+    helper_prev = None
+    if helper_prev_label:
+        for segment in harness.Segments:
+            if segment.Label == helper_prev_label:
+                helper_prev = segment
+                break
+    else:
+        segments = list(harness.Segments)
+        try:
+            index = segments.index(helper_a)
+        except ValueError:
+            index = -1
+        if index > 0:
+            bend_prefix = "Lace Helper {}.".format(
+                helper_a.Label.split()[2].split(".")[0]
+            )
+            for segment in reversed(segments[:index]):
+                if segment.Label.startswith(bend_prefix):
+                    helper_prev = segment
+                    break
+
+    def helper_center(segment):
+        return (
+            segment.Start.getGlobalPlacement().Base
+            + segment.End.getGlobalPlacement().Base
+        ) / 2.0
+
+    center_a = helper_center(helper_a)
+    center_b = helper_center(helper_b)
+    center_prev = helper_center(helper_prev) if helper_prev else None
+    tangent_a = (
+        helper_a.End.getGlobalPlacement().Base
+        - helper_a.Start.getGlobalPlacement().Base
+    ).normalize()
+    center_distance = (center_b - center_a).Length
+    angle_delta = math.radians(
+        helper_b.Orientation.Value - helper_a.Orientation.Value
+    )
+
+    cables = sorted(
+        [
+            obj
+            for obj in document.Objects
+            if getattr(getattr(obj, "Proxy", None), "Type", None)
+            == "WireCable"
+        ],
+        key=lambda cable: cable.Name,
+    )
+    group_name = "SpiralOptionA_All_{}".format(harness.Name)
+    _safe_remove_group(document, group_name)
+    group = document.addObject("App::DocumentObjectGroup", group_name)
+    group.Label = "Spiral Option A - All Cables"
+
+    def add_line(name, label, start, end, color, width):
+        obj = document.addObject("Part::Feature", name)
+        obj.Label = label
+        obj.Shape = Part.makeLine(start, end)
+        try:
+            obj.ViewObject.LineColor = color
+            obj.ViewObject.LineWidth = width
+        except Exception:
+            pass
+        group.addObject(obj)
+        return obj
+
+    rows = []
+    for cable in cables:
+        offset_a = _segment_cable_offset(harness, cable, helper_a)
+        offset_b = _segment_cable_offset(harness, cable, helper_b)
+        offset_prev = (
+            _segment_cable_offset(harness, cable, helper_prev)
+            if helper_prev
+            else None
+        )
+        radius_a = offset_a.Length
+        radius_b = offset_b.Length
+        normal_a = (
+            offset_a / radius_a
+            if radius_a > 1e-9
+            else tangent_a.cross(App.Vector(0, 0, 1)).normalize()
+        )
+        normal_b = (
+            offset_b / radius_b
+            if radius_b > 1e-9
+            else normal_a
+        )
+        point_a = center_a + offset_a
+        point_b = center_b + offset_b
+        point_prev = center_prev + offset_prev if center_prev is not None else None
+
+        forward = point_b - point_a
+        if forward.Length < 1e-9:
+            continue
+        forward = forward / forward.Length
+        if point_prev is not None:
+            backward = point_a - point_prev
+            if backward.Length < 1e-9:
+                backward = forward
+            else:
+                backward = backward / backward.Length
+        else:
+            backward = forward
+        averaged = backward + forward
+        if averaged.Length < 1e-9:
+            averaged = forward
+        else:
+            averaged = averaged / averaged.Length
+
+        tangential_direction = tangent_a.cross(normal_a)
+        if tangential_direction.Length < 1e-9:
+            tangential_direction = App.Vector(0, 0, 1)
+        else:
+            tangential_direction = tangential_direction.normalize()
+
+        def components(vector):
+            return (
+                vector.dot(tangent_a),
+                vector.dot(normal_a),
+                vector.dot(tangential_direction),
+            )
+
+        back_t, back_r, back_b = components(backward)
+        fwd_t, fwd_r, fwd_b = components(forward)
+        avg_t, avg_r, avg_b = components(averaged)
+        back_angle = math.degrees(math.atan2(back_b, back_t))
+        fwd_angle = math.degrees(math.atan2(fwd_b, fwd_t))
+        mean_angle = (back_angle + fwd_angle) / 2.0
+        avg_dir_angle = math.degrees(math.atan2(avg_b, avg_t))
+        local_angle = math.degrees(
+            math.atan2(radius_a * angle_delta, center_distance)
+        )
+        normal_step = math.degrees(
+            math.acos(
+                max(-1.0, min(1.0, normal_a.dot(normal_b)))
+            )
+        )
+
+        rgb = color_rgb(cable.CableColor) or (0.8, 0.8, 0.8)
+        light_rgb = tuple(min(1.0, 0.5 * value + 0.5) for value in rgb)
+        dark_rgb = tuple(0.55 * value for value in rgb)
+        add_line(
+            "SpiralAll_{}_Back".format(cable.Name),
+            "Spiral A {} - backward direction".format(cable.CableColor),
+            point_a - backward * segment_length,
+            point_a,
+            light_rgb,
+            2.0,
+        )
+        add_line(
+            "SpiralAll_{}_Forward".format(cable.Name),
+            "Spiral A {} - forward direction".format(cable.CableColor),
+            point_a,
+            point_a + forward * segment_length,
+            dark_rgb,
+            2.0,
+        )
+        add_line(
+            "SpiralAll_{}_Averaged".format(cable.Name),
+            "Spiral A {} - averaged segment".format(cable.CableColor),
+            point_a - averaged * (segment_length / 2.0),
+            point_a + averaged * (segment_length / 2.0),
+            rgb,
+            4.0,
+        )
+        add_line(
+            "SpiralAll_{}_Normal".format(cable.Name),
+            "Spiral A {} - normal".format(cable.CableColor),
+            point_a,
+            point_a + normal_a * normal_length,
+            dark_rgb,
+            3.0,
+        )
+        marker = document.addObject(
+            "Part::Feature", "SpiralAll_{}_Center".format(cable.Name)
+        )
+        marker.Label = "Spiral A {} - cable center".format(cable.CableColor)
+        marker.Shape = Part.makeSphere(0.8, point_a)
+        try:
+            marker.ViewObject.ShapeColor = rgb
+            marker.ViewObject.Transparency = 0
+        except Exception:
+            pass
+        group.addObject(marker)
+        rows.append(
+            (
+                cable.Name,
+                cable.CableColor,
+                radius_a,
+                back_angle,
+                fwd_angle,
+                mean_angle,
+                avg_dir_angle,
+                local_angle,
+                normal_step,
+                avg_t,
+                avg_r,
+                avg_b,
+            )
+        )
+
+    old_group = document.getObject("SpiralOptionA_{}".format(harness.Name))
+    if old_group is not None:
+        for child in old_group.Group:
+            try:
+                child.ViewObject.Visibility = False
+            except Exception:
+                pass
+        try:
+            old_group.ViewObject.Visibility = False
+        except Exception:
+            pass
+
+    document.recompute()
+    print("Option A averaged values per cable")
+    print("Cable      color       rA     back    fwd     mean    avgDir  local   nStep   T       R       B")
+    for row in rows:
+        print(
+            "{:<9} {:<10} {:.4f} {:7.3f} {:7.3f} {:7.3f} {:7.3f} {:7.3f} {:7.3f} {:.4f} {:.4f} {:.4f}".format(
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+                row[7],
+                row[8],
+                row[9],
+                row[10],
+                row[11],
+            )
+        )
+    return group
+
+
+def _route_cable_point(harness, cable, segment, at_end=False, at_start=False):
+    offset = _segment_cable_offset(harness, cable, segment)
+    start = segment.Start.getGlobalPlacement().Base
+    end = segment.End.getGlobalPlacement().Base
+    if segment.Label.startswith("Lace Helper"):
+        return (start + end) / 2.0 + offset
+    if at_end:
+        return end + offset
+    if at_start:
+        return start + offset
+    return (start + end) / 2.0 + offset
+
+
+def rebuild_cables_option_a(
+    harness,
+    hide_original=True,
+    hide_diagnostics=True,
+):
+    """Rebuild cable paths using per-cable averaged helper directions."""
+    from VibeWire.WireCreator import Segment, WireCreator
+    from VibeWire.WireColors import color_rgb
+
+    document = harness.Document
+    document.recompute()
+    cables = sorted(
+        [
+            obj
+            for obj in document.Objects
+            if getattr(getattr(obj, "Proxy", None), "Type", None)
+            == "WireCable"
+        ],
+        key=lambda cable: cable.Name,
+    )
+    group_name = "OptionACables_{}".format(harness.Name)
+    _safe_remove_group(document, group_name)
+    group = document.addObject("App::DocumentObjectGroup", group_name)
+    group.Label = "Option A Cables - {}".format(harness.Label)
+
+    rows = []
+    for cable in cables:
+        route = list(cable.Points)
+        segments = []
+        for index, segment in enumerate(route):
+            start = segment.Start.getGlobalPlacement().Base
+            end = segment.End.getGlobalPlacement().Base
+            offset = _segment_cable_offset(harness, cable, segment)
+            if segment.Label.startswith("Lace Helper"):
+                current = (start + end) / 2.0 + offset
+                helper_length = (end - start).Length
+                previous = route[index - 1] if index > 0 else None
+                following = route[index + 1] if index + 1 < len(route) else None
+                previous_point = (
+                    _route_cable_point(
+                        harness, cable, previous, at_end=True
+                    )
+                    if previous
+                    else None
+                )
+                following_point = (
+                    _route_cable_point(
+                        harness, cable, following, at_start=True
+                    )
+                    if following
+                    else None
+                )
+                helper_tangent = end - start
+                if helper_tangent.Length < 1e-9:
+                    continue
+                helper_tangent = helper_tangent / helper_tangent.Length
+                forward = (
+                    following_point - current
+                    if following_point is not None
+                    else helper_tangent
+                )
+                if forward.Length < 1e-9:
+                    forward = helper_tangent
+                else:
+                    forward = forward / forward.Length
+                backward = (
+                    current - previous_point
+                    if previous_point is not None
+                    else forward
+                )
+                if backward.Length < 1e-9:
+                    backward = forward
+                else:
+                    backward = backward / backward.Length
+                averaged = backward + forward
+                if averaged.Length < 1e-9:
+                    averaged = forward
+                else:
+                    averaged = averaged / averaged.Length
+                segments.append(
+                    Segment(
+                        current - averaged * (helper_length / 2.0),
+                        current + averaged * (helper_length / 2.0),
+                    )
+                )
+            else:
+                segments.append(
+                    Segment(start + offset, end + offset)
+                )
+
+        creator = WireCreator(min_bend_radius=cable.MinBendRadius.Value)
+        try:
+            path_wire = creator.create_wire(segments)
+        except Exception as error:
+            print("path build failed for", cable.Name, error)
+            continue
+        length, minimum_radius = creator.measure()
+        failed_arcs = creator.check_wire()
+
+        try:
+            solid_shape = creator.make_cable(
+                path_wire, diameter=cable.Diameter.Value
+            )
+        except Exception as error:
+            print("sweep failed for", cable.Name, error)
+            solid_shape = None
+
+        rgb = color_rgb(cable.CableColor) or (0.8, 0.8, 0.8)
+        path_obj = document.addObject(
+            "Part::Feature", "OptionA_Path_{}".format(cable.Name)
+        )
+        path_obj.Label = "Option A Path {}".format(cable.CableColor)
+        path_obj.Shape = path_wire
+        try:
+            path_obj.ViewObject.LineColor = rgb
+            path_obj.ViewObject.LineWidth = 2.0
+        except Exception:
+            pass
+        group.addObject(path_obj)
+
+        solid_obj = None
+        if solid_shape is not None:
+            solid_obj = document.addObject(
+                "Part::Feature", "OptionA_Solid_{}".format(cable.Name)
+            )
+            solid_obj.Label = "Option A Cable {}".format(cable.CableColor)
+            solid_obj.Shape = solid_shape
+            try:
+                solid_obj.ViewObject.ShapeColor = rgb
+                solid_obj.ViewObject.Transparency = 0
+            except Exception:
+                pass
+            group.addObject(solid_obj)
+
+        rows.append(
+            (
+                cable.Name,
+                cable.CableColor,
+                length,
+                minimum_radius,
+                len(failed_arcs),
+                solid_shape.isValid() if solid_shape is not None else False,
+            )
+        )
+
+    if hide_diagnostics:
+        for name in (
+            "SpiralOptionA_All_{}".format(harness.Name),
+            "SpiralOptionA_{}".format(harness.Name),
+        ):
+            diagnostic_group = document.getObject(name)
+            if diagnostic_group is not None:
+                for child in diagnostic_group.Group:
+                    try:
+                        child.ViewObject.Visibility = False
+                    except Exception:
+                        pass
+                try:
+                    diagnostic_group.ViewObject.Visibility = False
+                except Exception:
+                    pass
+
+    if hide_original:
+        for cable in cables:
+            try:
+                cable.ViewObject.Visibility = False
+            except Exception:
+                pass
+            for property_name in (
+                "PathObject",
+                "BadRadiusObject",
+                "BadLengthObject",
+            ):
+                link = getattr(cable, property_name, None)
+                if link is not None and link.Document is document:
+                    try:
+                        link.ViewObject.Visibility = False
+                    except Exception:
+                        pass
+
+    document.recompute()
+    print("Option A rebuilt cables")
+    print("Cable      color       length    minR    badArcs  solidOK")
+    for row in rows:
+        print(
+            "{:<9} {:<10} {:8.3f} {:7.3f} {:8d}  {}".format(
+                row[0], row[1], row[2], row[3], row[4], row[5]
+            )
+        )
+    return group

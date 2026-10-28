@@ -176,6 +176,40 @@ class EditHarnessCommand:
         return segment is not None and _harness_for_segment(segment) is not None
 
 
+class RegenerateLaceHelpersCommand:
+    def GetResources(self):
+        return {
+            "Pixmap": ICON,
+            "MenuText": "Regenerate Lace Helpers",
+            "ToolTip": "Rebuild the sparse lace helper segments for the selected harness",
+        }
+
+    def Activated(self):
+        try:
+            from freecad.VibeWire import WireBendHelpers
+
+            harness = _selected_of_type("WireHarness")
+            if harness is None:
+                segment = _selected_of_type("WireBundleSegment")
+                harness = (
+                    _harness_for_segment(segment)
+                    if segment is not None
+                    else None
+                )
+            if harness is None:
+                return
+            WireBendHelpers.rebuild_bend_helpers(harness)
+            Gui.ActiveDocument.ActiveView.fitAll()
+        except Exception as error:
+            QtGui.QMessageBox.critical(None, "VibeWire", str(error))
+
+    def IsActive(self):
+        if _selected_of_type("WireHarness") is not None:
+            return True
+        segment = _selected_of_type("WireBundleSegment")
+        return segment is not None and _harness_for_segment(segment) is not None
+
+
 class MoveSegmentStartCommand:
     def GetResources(self):
         return {
@@ -234,3 +268,4 @@ Gui.addCommand("VibeWire_EditTip", EditTipCommand())
 Gui.addCommand("VibeWire_EditHarness", EditHarnessCommand())
 Gui.addCommand("VibeWire_MoveSegmentStart", MoveSegmentStartCommand())
 Gui.addCommand("VibeWire_MoveSegmentEnd", MoveSegmentEndCommand())
+Gui.addCommand("VibeWire_RegenerateLaceHelpers", RegenerateLaceHelpersCommand())

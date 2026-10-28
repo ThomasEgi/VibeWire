@@ -63,6 +63,7 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - Cable-tool edits live-update after a short debounce. One valid bundle segment is enough to create a cable. Incomplete routes keep the valid prefix in `Points`, set `Preview=True` (red path only), and show an orange status.
 - The wire tool keeps a selection observer while open: selecting a bundle segment in 3D selects its row, and selecting a row highlights its bundle segment.
 - `execute()` rebuilds geometry from the bundle segment endpoints and depends on ancestor groups of those endpoints.
+- Lace helper segments use option A: each cable computes backward/forward chord directions at every helper and rotates the helper path piece by the normalized average. This removes most of the bend waviness while the bi-arc solver handles the gaps.
 - Double-clicking a cable opens `WireTaskPanel` prefilled with the stored route; edits update the same object.
 - Path, bad-arc, core and ferrule display objects are linked through `PathObject`, `BadRadiusObject`, `BadLengthObject`, `StartCoreObject`/`EndCoreObject`, and `StartFerruleMetal`/`EndFerruleMetal`/`StartFerruleSleeve`/`EndFerruleSleeve`.
 - `Dependencies` stores ancestor `GeoFeatureGroup`s of the bundle-segment endpoint references so moving an enclosing `App::Part`/Body recomputes the cable.
@@ -90,9 +91,9 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and computed `Layout`.
 - Cables link `cable.Harness`; the harness finds member cables through `InList` and never links them back.
 - `Layout` stores lane offset vectors keyed by `segmentName|cableName`; cables shift both bundle-run endpoints by their offset.
-- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, `Radius`, `Orientation`, and `MaxCables` (0 = unlimited).
+- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, `Radius`, `Orientation`, `MaxCables` (0 = unlimited) and `SegmentRole` (`Route`/`Lace Helper`).
 - New segments default to visible, dark grey (`0.33, 0.33, 0.36`) at 65% transparency. The selected segment’s display radius is live-editable; Add Segment copies the active/default radius.
-- All segments are placed in a standard `App::DocumentObjectGroup` linked through `SegmentGroup`. The harness claims that group in the tree, so its eye toggles all segment visibility at once.
+- Route segments are placed in the `SegmentGroup`; lace helpers and their point nodes are placed in the separate `HelperGroup` (`Lace Helpers`). The harness claims both groups in the tree, so each eye toggles its own contents.
 - The harness view provider has an empty Coin display mode and `DefaultMode=0` so its eye/claimed children are showable.
 - Bundle segments occasionally receive a Part view provider with `Proxy=None` and no Coin display modes; `execute()` initializes it with `ViewObject.Proxy=1`, makes it visible, and signals the tree icon.
 - Use `App::PropertyLinkGlobal` for segment start/end references; normal `PropertyLink` triggers scope warnings inside `App::Part`.
@@ -113,6 +114,7 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `WireCable` provides the persistent object and double-click editing.
 - `WireHarness` is the layout authority and owns the straight segment objects.
 - `WireBundleTaskPanel` edits harness segments, visibility group, per-segment radius/MaxCables, gap and pattern; it syncs list/3D selection.
+- `WireBendHelpers.py` rebuilds sparse lace helpers from the solved bends; `VibeWire_RegenerateLaceHelpers` is the toolbar/context command.
 - `WireColors.py` holds the primary/tracer palette and quadrant logic.
 - `FerruleData.py` loads the checked-in ferrule JSON.
 - `WireSelection.py` provides the selection reconciler, helper remapping and hover previews.
@@ -197,7 +199,8 @@ Bundle segment endpoints are point references defined in global coordinates or r
 - `freecad/VibeWire/WireCable.py` — persistent cable object, validation, colors and helpers.
 - `freecad/VibeWire/WireTaskPanel.py` — bundle-segment wire route editor and geometry controls.
 - `freecad/VibeWire/VibeWireCmd.py` — toolbar and context-menu commands.
-- `freecad/VibeWire/WireBundle.py` — harness layout, segment group, segment objects and view providers.
+- `freecad/VibeWire/WireBundle.py` — harness layout, route/helper groups, segment roles, segment objects and view providers.
+- `freecad/VibeWire/WireBendHelpers.py` — automatic sparse lace-helper generation and orientation interpolation.
 - `freecad/VibeWire/WireBundleTaskPanel.py` — harness segment/group/radius/gap/pattern editor.
 - `freecad/VibeWire/WireTip.py` — per-end cable tip settings object and view provider.
 - `freecad/VibeWire/WireTipTaskPanel.py` — cable tip settings editor.
