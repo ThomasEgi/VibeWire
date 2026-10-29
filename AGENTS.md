@@ -88,10 +88,11 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - Closing a tool deselects only the edited object, clears its current-item/background state, and leaves other selected objects selected.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`) and computed `Layout`.
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`/`Packed`) and computed `Layout`.
+- `Packed` uses the optional pymunk 2D physics engine in `WirePacking.py`: a loose spiral seed is compacted into a touching cross-section with zero wire clearance; the packed offsets are shifted so the smallest-enclosing-circle center coincides with the segment axis, and segment display radius uses that circle. The harness `Gap` applies only to `Circular`/`Linear`. If pymunk is unavailable, the harness falls back to `Circular` and the harness panel shows a warning notice.
 - Cables link `cable.Harness`; the harness finds member cables through `InList` and never links them back.
-- `Layout` stores lane offset vectors keyed by `segmentName|cableName`; cables shift both bundle-run endpoints by their offset.
-- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, `Radius`, `Orientation`, `MaxCables` (0 = unlimited) and `SegmentRole` (`Route`/`Lace Helper`).
+- `Layout` stores lane offset vectors keyed by `segmentName|cableName`; cables shift both bundle-run endpoints by their offset. The harness also computes each segment's `HullCurve` from the cable offsets and diameters for later covering/exit work.
+- Each `WireBundleSegment` (`Part::FeaturePython`) has `Start`/`End` point references, `Radius`, `Orientation`, `MaxCables` (0 = unlimited), `SegmentRole` (`Route`/`Lace Helper`) and a computed, hidden `HullCurve` (closed convex hull of the bundle at the segment start).
 - New segments default to visible, dark grey (`0.33, 0.33, 0.36`) at 65% transparency. The selected segment’s display radius is live-editable; Add Segment copies the active/default radius.
 - Route segments are placed in the `SegmentGroup`; lace helpers and their point nodes are placed in the separate `HelperGroup` (`Lace Helpers`). The harness claims both groups in the tree, so each eye toggles its own contents.
 - The harness view provider has an empty Coin display mode and `DefaultMode=0` so its eye/claimed children are showable.
@@ -113,9 +114,10 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `WireTaskPanel` is bundle-segment-only: one picker per route row and Reverse Segment; one valid segment auto-creates the cable.
 - `WireCable` provides the persistent object and double-click editing.
 - `WireHarness` is the layout authority and owns the straight segment objects.
-- `WireBundleTaskPanel` edits harness segments, visibility group, per-segment radius/MaxCables, gap and pattern; it syncs list/3D selection.
+- `WireBundleTaskPanel` edits harness route segments, visibility group, per-segment radius/MaxCables, gap and pattern; it excludes auto-generated lace helpers from the editor list, rebuilds them on Update Harness, syncs list/3D selection, notes that `Packed` uses zero clearance, and warns when `Packed` is selected without pymunk.
 - `WireBendHelpers.py` rebuilds sparse lace helpers from the solved bends; `VibeWire_RegenerateLaceHelpers` is the toolbar/context command.
 - `WireColors.py` holds the primary/tracer palette and quadrant logic.
+- `WirePacking.py` provides the optional pymunk-backed `Packed` harness layout and pymunk availability checks.
 - `FerruleData.py` loads the checked-in ferrule JSON.
 - `WireSelection.py` provides the selection reconciler, helper remapping and hover previews.
 - `WireTaskWatchers.py` defines the contextual Tasks-panel groups and hover buttons.
@@ -126,6 +128,7 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 ### Prerequisites
 - FreeCAD GUI installed and running.
 - Plugin directory linked into the FreeCAD Mod path.
+- Optional: `pymunk` for the `Packed` harness pattern (`pip install --user pymunk` using FreeCAD's Python). Without it, `Packed` falls back to `Circular` and the harness panel warns.
 
 ### Environment Quirks
 - FreeCAD runs as an AppImage with its own Python environment.
@@ -208,6 +211,7 @@ Bundle segment endpoints are point references defined in global coordinates or r
 - `freecad/VibeWire/WireSelection.py` — selection reconciler, helper remapping and hover previews.
 - `freecad/VibeWire/WireTaskWatchers.py` — contextual Tasks-panel tool groups and hover buttons.
 - `freecad/VibeWire/WireColors.py` — primary/tracer cable color palette and quadrant layouts.
+- `freecad/VibeWire/WirePacking.py` — optional pymunk-backed `Packed` harness layout.
 - `freecad/VibeWire/Resources/Data/ferrules_DIN46228_T4.json` — checked-in ferrule library.
 - `freecad/VibeWire/PointReference.py` — shared point-reference pick helpers and selection gates.
 - `tools/csv_to_ferrules_json.py` — example ferrule CSV-to-JSON converter.

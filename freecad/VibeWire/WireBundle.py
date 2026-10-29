@@ -7,10 +7,13 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 
+from .WirePacking import packed_fit_radius, packed_positions
+
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 BUNDLE_SEGMENT_TYPE = "WireBundleSegment"
 ROUTE_SEGMENT_ROLE = "Route"
 LACE_HELPER_ROLE = "Lace Helper"
+_PACKING_FALLBACK_WARNED = False
 
 
 def is_bundle_segment(obj):
@@ -28,6 +31,64 @@ def is_lace_helper(obj):
     if getattr(obj, "SegmentRole", None) == LACE_HELPER_ROLE:
         return True
     return getattr(obj, "Label", "").startswith("Lace Helper ")
+
+
+def _cross_2d(origin, first, second):
+    return (
+        (first[0] - origin[0]) * (second[1] - origin[1])
+        - (first[1] - origin[1]) * (second[0] - origin[0])
+    )
+
+
+def _convex_hull_2d(points):
+    unique = sorted(set((round(x, 9), round(y, 9)) for x, y in points))
+    if len(unique) <= 1:
+        return unique
+    lower = []
+    for point in unique:
+        while (
+            len(lower) >= 2
+            and _cross_2d(lower[-2], lower[-1], point) <= 0.0
+        ):
+            lower.pop()
+        lower.append(point)
+    upper = []
+    for point in reversed(unique):
+        while (
+            len(upper) >= 2
+            and _cross_2d(upper[-2], upper[-1], point) <= 0.0
+        ):
+            upper.pop()
+        upper.append(point)
+    return lower[:-1] + upper[:-1]
+
+
+def _bundle_hull_shape(start, side, normal, positions, diameters, samples=64):
+    if not positions:
+        return Part.Shape()
+    angles = [
+        2.0 * math.pi * index / samples
+        for index in range(samples)
+    ]
+    points = []
+    for (x, y), diameter in zip(positions, diameters):
+        radius = max(0.0, diameter) / 2.0
+        for angle in angles:
+            points.append(
+                (
+                    x + radius * math.cos(angle),
+                    y + radius * math.sin(angle),
+                )
+            )
+    hull = _convex_hull_2d(points)
+    if len(hull) < 3:
+        return Part.Shape()
+    points3d = [
+        start + side * x + normal * y
+        for x, y in hull
+    ]
+    points3d.append(points3d[0])
+    return Part.makePolygon(points3d)
 
 
 class WireHarnessProxy:
@@ -84,8 +145,13 @@ class WireHarnessProxy:
                 "Harness",
                 "Cable arrangement pattern",
             )
-            obj.Pattern = ["Circular", "Linear"]
-            obj.Pattern = "Circular"
+        current_pattern = getattr(obj, "Pattern", "Circular")
+        obj.Pattern = ["Circular", "Linear", "Packed"]
+        obj.Pattern = (
+            current_pattern
+            if current_pattern in ("Circular", "Linear", "Packed")
+            else "Circular"
+        )
         if "Layout" not in properties:
             obj.addProperty(
                 "App::PropertyMap",
@@ -119,12 +185,37 @@ class WireHarnessProxy:
                 cable for cable in cables if cable_uses_segment(cable, segment)
             ]
             if not users:
+                if "HullCurve" in segment.PropertiesList:
+                    try:
+                        segment.HullCurve = Part.Shape()
+                    except Exception:
+                        pass
                 continue
 
             diameters = [max(0.0, cable.Diameter.Value) for cable in users]
             count = len(users)
             if pattern == "Linear":
                 positions = self._linear_positions(diameters, gap)
+            elif pattern == "Packed":
+                positions = packed_positions(diameters)
+                if positions is None:
+                    global _PACKING_FALLBACK_WARNED
+                    if not _PACKING_FALLBACK_WARNED:
+                        App.Console.PrintWarning(
+                            "VibeWire: pymunk is unavailable; Packed harness "
+                            "pattern is falling back to Circular.\n"
+                        )
+                        _PACKING_FALLBACK_WARNED = True
+                    positions = self._circular_positions(diameters, gap)
+                else:
+                    fit_radius = packed_fit_radius(diameters)
+                    if fit_radius is not None:
+                        if abs(segment.Radius.Value - fit_radius) > 1e-6:
+                            segment.Radius = fit_radius
+                            try:
+                                segment.Proxy.execute(segment)
+                            except Exception:
+                                segment.touch()
             else:
                 positions = self._circular_positions(diameters, gap)
 
@@ -134,6 +225,26 @@ class WireHarnessProxy:
                 layout[f"{segment.Name}|{cable.Name}"] = (
                     f"{offset.x:.9f},{offset.y:.9f},{offset.z:.9f}"
                 )
+
+            if "HullCurve" not in segment.PropertiesList:
+                try:
+                    WireBundleSegmentProxy._add_properties(segment)
+                except Exception:
+                    pass
+            try:
+                start = segment.Start.getGlobalPlacement().Base
+                segment.HullCurve = _bundle_hull_shape(
+                    start,
+                    side,
+                    normal,
+                    positions,
+                    diameters,
+                )
+            except Exception:
+                try:
+                    segment.HullCurve = Part.Shape()
+                except Exception:
+                    pass
         obj.Layout = layout
 
     @staticmethod
@@ -564,6 +675,17 @@ class WireBundleSegmentProxy:
             )
             try:
                 obj.setEditorMode("Dependencies", 2)
+            except Exception:
+                pass
+        if "HullCurve" not in obj.PropertiesList:
+            obj.addProperty(
+                "Part::PropertyPartShape",
+                "HullCurve",
+                "Segment",
+                "Convex hull of the cable bundle at the segment start",
+            )
+            try:
+                obj.setEditorMode("HullCurve", 2)
             except Exception:
                 pass
 

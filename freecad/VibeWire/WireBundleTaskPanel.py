@@ -13,9 +13,11 @@ from .PointReference import (
 from .WireBundle import (
     create_bundle_segment,
     create_wire_harness,
+    is_lace_helper,
     remove_bundle_segment,
     update_segment_dependencies,
 )
+from .WirePacking import physics_available, unavailable_message
 
 
 class WireBundleTaskPanel:
@@ -101,9 +103,15 @@ class WireBundleTaskPanel:
         self.gap_spin.setSuffix(" mm")
         radius_form.addRow("Cable gap:", self.gap_spin)
         self.pattern_combo = QtGui.QComboBox()
-        self.pattern_combo.addItems(["Circular", "Linear"])
+        self.pattern_combo.addItems(["Circular", "Linear", "Packed"])
         radius_form.addRow("Pattern:", self.pattern_combo)
         layout.addLayout(radius_form)
+
+        self.packing_notice = QtGui.QLabel("")
+        self.packing_notice.setWordWrap(True)
+        self.packing_notice.setStyleSheet("color: #b35c00;")
+        self.packing_notice.setVisible(False)
+        layout.addWidget(self.packing_notice)
 
         self.btn_apply = QtGui.QPushButton()
         layout.addWidget(self.btn_apply)
@@ -120,6 +128,7 @@ class WireBundleTaskPanel:
         self.end_label.clicked.connect(lambda: self.select_point("end"))
         self.btn_apply.clicked.connect(self.apply)
         self.segment_type_combo.currentTextChanged.connect(self._on_segment_type_changed)
+        self.pattern_combo.currentTextChanged.connect(self._on_pattern_changed)
         self.orientation_spin.valueChanged.connect(self._on_orientation_changed)
         self.max_cables_spin.valueChanged.connect(self._on_max_cables_changed)
         self.radius_spin.valueChanged.connect(self._on_radius_changed)
@@ -133,10 +142,30 @@ class WireBundleTaskPanel:
             self._update_list()
             self._update_detail()
 
+        self._update_packing_notice()
         self._select_initial_segment()
         self.segment_list.currentRowChanged.connect(self._on_list_row_changed)
         self._selection_observer = PickObserver(self._on_scene_selection)
         Gui.Selection.addObserver(self._selection_observer)
+
+    def _on_pattern_changed(self, _text):
+        self._update_packing_notice()
+
+    def _update_packing_notice(self):
+        if self.pattern_combo.currentText() != "Packed":
+            self.packing_notice.setText("")
+            self.packing_notice.setVisible(False)
+            return
+        if not physics_available():
+            self.packing_notice.setStyleSheet("color: #b35c00;")
+            self.packing_notice.setText(unavailable_message())
+        else:
+            self.packing_notice.setStyleSheet("color: #555555;")
+            self.packing_notice.setText(
+                "Packed uses zero clearance between wires. Cable gap applies "
+                "to Circular and Linear patterns."
+            )
+        self.packing_notice.setVisible(True)
 
     def _update_button_labels(self):
         action = "Update" if self.bundle is not None else "Create"
@@ -146,6 +175,8 @@ class WireBundleTaskPanel:
         self.segments = []
         document = self.bundle.Document
         for segment in self.bundle.Segments:
+            if is_lace_helper(segment):
+                continue
             start = segment.Start
             end = segment.End
             orientation = 0.0
@@ -166,6 +197,7 @@ class WireBundleTaskPanel:
             self.gap_spin.setValue(self.bundle.Gap.Value)
         if "Pattern" in self.bundle.PropertiesList:
             self.pattern_combo.setCurrentText(self.bundle.Pattern)
+        self._update_packing_notice()
         self._update_list()
         if self.segments:
             self.segment_list.setCurrentRow(0)
@@ -576,7 +608,7 @@ class WireBundleTaskPanel:
                     "Harness",
                     "Cable arrangement pattern",
                 )
-                self.bundle.Pattern = ["Circular", "Linear"]
+            self.bundle.Pattern = ["Circular", "Linear", "Packed"]
             self.bundle.Gap = self.gap_spin.value()
             self.bundle.Pattern = self.pattern_combo.currentText()
 
@@ -612,14 +644,29 @@ class WireBundleTaskPanel:
 
             ensure_segment_group(self.bundle)
             ensure_helper_group(self.bundle)
+            from .WireBendHelpers import rebuild_bend_helpers
+
+            rebuild_bend_helpers(self.bundle)
         except Exception as error:
             QtGui.QMessageBox.critical(self.form, "VibeWire", str(error))
             return
 
         document.recompute()
         self._update_button_labels()
+        helper_count = len(
+            [
+                segment
+                for segment in self.bundle.Segments
+                if is_lace_helper(segment)
+            ]
+        )
         self.status_label.setStyleSheet("")
-        self.status_label.setText(f"Harness has {len(panel_objects)} segment(s).")
+        self.status_label.setText(
+            "Harness has {} route segment(s) and {} lace helper(s).".format(
+                len(panel_objects),
+                helper_count,
+            )
+        )
 
     def reject(self):
         self._stop_picking()

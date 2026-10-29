@@ -115,6 +115,8 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - [x] **Segment group**: Keep all harness segments in a standard group so one eye toggle shows/hides the whole bundle; the harness claims the group in the tree
 - [x] **Wire-level bi-arcs**: Generate transitions between consecutive route pieces with the M1 bi-arc solver; the bundle itself remains straight segments only
 - [x] **Place cables side by side**: For each bundle segment, arrange routed cables with a definable gap using a linear or circular cross-section pattern
+- [x] **Physics-based packed pattern**: Optional `Packed` harness pattern uses the pymunk 2D physics engine to compact a loose spiral seed into a touching cross-section with zero wire clearance (harness `Gap` applies only to Circular/Linear); falls back to `Circular` with a warning when pymunk is unavailable
+- [x] **Per-segment bundle hull**: Compute and store each segment's closed convex hull curve from the cable offsets and diameters for later covering/breakout use (not displayed yet)
 - [x] **Consistent gaps**: Edge-to-edge gaps remain consistent even with different cable diameters in the linear pattern; the circular pattern uses a clearance-based ring radius
 - [x] **Per-segment orientation**: Rotation of the cable arrangement about the bundle segment axis is user-definable per segment
 - [x] **Bundle segment display**: Show pickable cylinder geometry for each bundle segment (with a configurable preview radius)
@@ -126,7 +128,7 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - **Wire route (current)**: Each cable stores an ordered `Points` list where every entry is a `WireBundleSegment`, plus a parallel `SegmentDirections` list (0 normal, 1 reversed). Each route row resolves to one oriented bundle run; consecutive runs are connected by the cable-level bi-arc solver. Point-to-point route pieces are no longer supported.
 - **Picking and direction**: The wire panel has one picker per row that accepts bundle segment cylinders only. A picked segment runs normal (`Start` -> `End`) by default; the Reverse Segment button toggles its entry in `SegmentDirections` to run reversed (`End` -> `Start`).
 - **Segment frame**: For a segment axis `u = normalize(end - start)`, derive a lateral axis from the averaged global coordinate frames of the `Start`/`End` references (local Z, then Y/X fallbacks), then apply the segment's `Orientation` angle about `u`. This preserves rotations of the driving LCS/App::Part/Body frames, with manual roll composed on top. The cable uses the same lateral axis for its lane offset.
-- **Arrangement (current)**: The harness has a `Pattern` enum (`Circular` by default, or `Linear`). Linear places centres along the lateral axis using edge-to-edge spacing `r_i + gap + r_(i+1)` and centres the row on the segment axis. Circular distributes centres at equal angles around the axis, choosing a ring radius large enough for the requested adjacent clearance. The harness stores the resulting 2D/3D offset vectors in `Layout` keyed by `segmentName|cableName`; exact circular gap packing and per-segment order overrides can be added later.
+- **Arrangement (current)**: The harness has a `Pattern` enum (`Circular` by default, `Linear`, or `Packed`). Linear places centres along the lateral axis using edge-to-edge spacing `r_i + gap + r_(i+1)` and centres the row on the segment axis. Circular distributes centres at equal angles around the axis, choosing a ring radius large enough for the requested adjacent clearance. Packed uses `WirePacking.py`/pymunk: a spiral seed with initial clearance is compacted by an inward radial pressure and pymunk contacts to zero wire clearance, then shifted so the smallest-enclosing-circle center matches the segment axis and cached; the segment display radius uses that circle, and the harness `Gap` applies only to Circular/Linear. The harness stores the resulting 2D/3D offset vectors in `Layout` keyed by `segmentName|cableName`; exact circular gap packing and per-segment order overrides can be added later.
 - **Offset segments**: For a cable on a segment, the lane offset is constant along the straight segment. The cable reads the harness-computed global offset vector from `cable.Harness.Layout` and shifts both endpoints by that vector. Normal direction: `start = segment.start + offset`, `end = segment.end + offset`, tangent `+u`. Reversed direction: `start = segment.end + offset`, `end = segment.start + offset`, tangent `-u`.
 - **Bi-arc generation**: Resolve every route row into its oriented bundle run. Feed the ordered runs to the M1 `WireCreator`, which inserts bi-arcs where runs meet; gaps and reversals are handled at cable level, not bundle level.
 - **Branching**: A cable may route over any ordered subset of bundle segments. Per-segment member lists are derived from the cables' routes, so cables can join or leave the bundle between segments without changing the bundle segment definitions.
@@ -142,7 +144,8 @@ Goal: Handle bundles of cables routed together, with simple arrangement and orie
 - Cables exceeding a bundle segment `MaxCables` limit fail validation
 - Cable routes can use subsets of the bundle and branch in/out
 - Bi-arcs are generated at the cable level between consecutive route pieces, including direct/bundle transitions
-- Cables are arranged in a definable gap using either the circular or linear harness pattern
+- Cables are arranged in a definable gap using the circular, linear or packed harness pattern
+- The packed pattern uses a collision-free spiral seed, packs wires with zero clearance by default, and falls back to circular with a warning when pymunk is unavailable
 - Linear patterns keep edge-to-edge gaps consistent for different diameters; circular patterns keep at least the requested clearance
 - The harness computes lane offsets and cables read them from the harness
 - Cable changes (route, diameter, harness membership) invalidate and recompute the harness layout
@@ -170,7 +173,7 @@ Goal: Provide a dedicated editor for the growing set of cable pattern and placem
 
 ### Technical Details
 - Extend `WireHarness`/`WireBundleSegment` with pattern settings and per-segment overrides; do not add cable back-links
-- Keep layout computation in the harness; store final offsets/slots as plain data/global vectors
+- Keep layout computation in the harness; store final offsets/slots as plain data/global vectors and store the per-segment convex hull as a hidden shape property on the bundle segment
 - Build a dedicated 2D cross-section editor for the selected segment
 - Use deterministic ordering and stable slot IDs so editing remains predictable
 - Dynamic order pass: when membership, route direction, diameter, gap or pattern changes, recompute each segment's wire order with a cost function that penalizes lane crossings, large lateral shifts from the previous/next segment, and long transition arcs; keep manual pins fixed and persist computed order separately from overrides
