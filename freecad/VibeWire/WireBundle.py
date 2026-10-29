@@ -7,7 +7,7 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 
-from .WirePacking import packed_fit_radius, packed_positions
+from .WirePacking import fit_radius_for_positions, packed_positions
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
 BUNDLE_SEGMENT_TYPE = "WireBundleSegment"
@@ -177,6 +177,10 @@ class WireHarnessProxy:
 
         gap = obj.Gap.Value
         pattern = getattr(obj, "Pattern", "Circular")
+        if pattern == "Packed":
+            obj.Layout = self._packed_layout(obj, cables, gap)
+            return
+
         layout = {}
         for segment in obj.Segments:
             if not is_bundle_segment(segment):
@@ -193,29 +197,8 @@ class WireHarnessProxy:
                 continue
 
             diameters = [max(0.0, cable.Diameter.Value) for cable in users]
-            count = len(users)
             if pattern == "Linear":
                 positions = self._linear_positions(diameters, gap)
-            elif pattern == "Packed":
-                positions = packed_positions(diameters)
-                if positions is None:
-                    global _PACKING_FALLBACK_WARNED
-                    if not _PACKING_FALLBACK_WARNED:
-                        App.Console.PrintWarning(
-                            "VibeWire: pymunk is unavailable; Packed harness "
-                            "pattern is falling back to Circular.\n"
-                        )
-                        _PACKING_FALLBACK_WARNED = True
-                    positions = self._circular_positions(diameters, gap)
-                else:
-                    fit_radius = packed_fit_radius(diameters)
-                    if fit_radius is not None:
-                        if abs(segment.Radius.Value - fit_radius) > 1e-6:
-                            segment.Radius = fit_radius
-                            try:
-                                segment.Proxy.execute(segment)
-                            except Exception:
-                                segment.touch()
             else:
                 positions = self._circular_positions(diameters, gap)
 
@@ -226,26 +209,233 @@ class WireHarnessProxy:
                     f"{offset.x:.9f},{offset.y:.9f},{offset.z:.9f}"
                 )
 
-            if "HullCurve" not in segment.PropertiesList:
-                try:
-                    WireBundleSegmentProxy._add_properties(segment)
-                except Exception:
-                    pass
-            try:
-                start = segment.Start.getGlobalPlacement().Base
-                segment.HullCurve = _bundle_hull_shape(
-                    start,
-                    side,
-                    normal,
-                    positions,
-                    diameters,
+            self._update_segment_section(segment, positions, diameters)
+        obj.Layout = layout
+
+    def _packed_layout(self, obj, cables, gap):
+        """Pack every segment from the fewest to the most cables.
+
+        A cable entering a segment from an already-solved segment with fewer
+        cables seeds that cable's cross-section position. Higher-count
+        neighbours are ignored so information only flows from branches into
+        the trunk. Adjacent segments with identical cable sets copy their
+        section directly.
+        """
+        segments = [segment for segment in obj.Segments if is_bundle_segment(segment)]
+        if not segments:
+            return {}
+
+        segment_set = set(segments)
+        routes = {}
+        directions = {}
+        users = {segment: [] for segment in segments}
+        adjacency = {segment: set() for segment in segments}
+        for cable in cables:
+            raw_points = list(getattr(cable, "Points", []))
+            raw_directions = list(getattr(cable, "SegmentDirections", []) or [])
+            route = []
+            route_directions = []
+            for index, node in enumerate(raw_points):
+                if not is_bundle_segment(node) or node not in segment_set:
+                    continue
+                route.append(node)
+                route_directions.append(
+                    int(raw_directions[index])
+                    if index < len(raw_directions)
+                    else 0
                 )
-            except Exception:
+            routes[cable] = route
+            directions[cable] = route_directions
+            for segment in dict.fromkeys(route):
+                users[segment].append(cable)
+            for index in range(len(route) - 1):
+                first = route[index]
+                second = route[index + 1]
+                adjacency[first].add(second)
+                adjacency[second].add(first)
+
+        active = [segment for segment in segments if users[segment]]
+        counts = {segment: len(users[segment]) for segment in active}
+        ordered = sorted(
+            active,
+            key=lambda segment: (counts[segment], segment.Name),
+        )
+
+        positions_by_segment = {}
+        layout = {}
+
+        for segment in ordered:
+            if segment.Start is None or segment.End is None:
+                continue
+            segment_users = users[segment]
+            count = counts[segment]
+            diameters = [
+                max(0.0, cable.Diameter.Value) for cable in segment_users
+            ]
+            side, normal = segment_basis(segment)
+            start = segment.Start.getGlobalPlacement().Base
+            end = segment.End.getGlobalPlacement().Base
+            center = (start + end) / 2.0
+
+            copied_from = None
+            segment_user_set = set(segment_users)
+            for neighbor in adjacency.get(segment, ()):
+                if neighbor not in positions_by_segment:
+                    continue
+                if set(users[neighbor]) == segment_user_set:
+                    copied_from = neighbor
+                    break
+
+            if copied_from is not None:
+                positions = [
+                    positions_by_segment[copied_from][cable]
+                    for cable in segment_users
+                ]
+            else:
+                seeds = []
+                has_seed = False
+                for cable in segment_users:
+                    points = []
+                    route = routes.get(cable, [])
+                    route_directions = directions.get(cable, [])
+                    for index, node in enumerate(route):
+                        if node is not segment:
+                            continue
+                        for neighbor_index in (index - 1, index + 1):
+                            if neighbor_index < 0 or neighbor_index >= len(route):
+                                continue
+                            neighbor = route[neighbor_index]
+                            if neighbor is segment:
+                                continue
+                            if neighbor not in positions_by_segment:
+                                continue
+                            if counts.get(neighbor, 0) >= count:
+                                continue
+                            local = positions_by_segment.get(neighbor, {}).get(cable)
+                            if local is None:
+                                continue
+                            neighbor_direction = (
+                                route_directions[neighbor_index]
+                                if neighbor_index < len(route_directions)
+                                else 0
+                            )
+                            target_direction = (
+                                route_directions[index]
+                                if index < len(route_directions)
+                                else 0
+                            )
+                            if neighbor_index < index:
+                                boundary = (
+                                    neighbor.End
+                                    if neighbor_direction % 2 == 0
+                                    else neighbor.Start
+                                )
+                            else:
+                                boundary = (
+                                    neighbor.Start
+                                    if neighbor_direction % 2 == 0
+                                    else neighbor.End
+                                )
+                            if boundary is None:
+                                continue
+                            relative = boundary.getGlobalPlacement().Base - center
+                            sign = (
+                                1
+                                if (neighbor_direction + target_direction) % 2 == 0
+                                else -1
+                            )
+                            points.append(
+                                (
+                                    relative.dot(side) + local[0],
+                                    relative.dot(normal) + local[1] * sign,
+                                )
+                            )
+                    if points:
+                        seeds.append(
+                            (
+                                sum(point[0] for point in points) / len(points),
+                                sum(point[1] for point in points) / len(points),
+                            )
+                        )
+                        has_seed = True
+                    else:
+                        seeds.append(None)
+
+                positions = packed_positions(
+                    diameters,
+                    initial_positions=seeds if has_seed else None,
+                )
+                if positions is None:
+                    self._warn_packing_fallback()
+                    positions = self._circular_positions(diameters, gap)
+
+            segment_positions = {}
+            for cable, (x, y) in zip(segment_users, positions):
+                segment_positions[cable] = (x, y)
+                offset = side * x + normal * y
+                layout[f"{segment.Name}|{cable.Name}"] = (
+                    f"{offset.x:.9f},{offset.y:.9f},{offset.z:.9f}"
+                )
+            positions_by_segment[segment] = segment_positions
+
+            fit_radius = fit_radius_for_positions(positions, diameters)
+            if fit_radius is not None:
+                self._set_segment_radius(segment, fit_radius)
+            self._update_segment_section(segment, positions, diameters)
+
+        for segment in segments:
+            if users[segment]:
+                continue
+            if "HullCurve" in segment.PropertiesList:
                 try:
                     segment.HullCurve = Part.Shape()
                 except Exception:
                     pass
-        obj.Layout = layout
+        return layout
+
+    @staticmethod
+    def _warn_packing_fallback():
+        global _PACKING_FALLBACK_WARNED
+        if not _PACKING_FALLBACK_WARNED:
+            App.Console.PrintWarning(
+                "VibeWire: pymunk is unavailable; Packed harness "
+                "pattern is falling back to Circular.\n"
+            )
+            _PACKING_FALLBACK_WARNED = True
+
+    @staticmethod
+    def _set_segment_radius(segment, radius):
+        if abs(segment.Radius.Value - radius) <= 1e-6:
+            return
+        segment.Radius = radius
+        try:
+            segment.Proxy.execute(segment)
+        except Exception:
+            segment.touch()
+
+    @staticmethod
+    def _update_segment_section(segment, positions, diameters):
+        if "HullCurve" not in segment.PropertiesList:
+            try:
+                WireBundleSegmentProxy._add_properties(segment)
+            except Exception:
+                pass
+        try:
+            start = segment.Start.getGlobalPlacement().Base
+            side, normal = segment_basis(segment)
+            segment.HullCurve = _bundle_hull_shape(
+                start,
+                side,
+                normal,
+                positions,
+                diameters,
+            )
+        except Exception:
+            try:
+                segment.HullCurve = Part.Shape()
+            except Exception:
+                pass
+
 
     @staticmethod
     def _linear_positions(diameters, gap):

@@ -144,9 +144,22 @@ def rebuild_bend_helpers(
         for obj in document.Objects
         if getattr(getattr(obj, "Proxy", None), "Type", None) == "WireCable"
     ]
+
+    cable_routes = {}
     for cable in cables:
-        cable.Points = original
-        cable.SegmentDirections = [0] * len(original)
+        directions = list(getattr(cable, "SegmentDirections", []))
+        route = []
+        route_directions = []
+        for index, segment in enumerate(list(cable.Points)):
+            if WireBundle.is_lace_helper(segment):
+                continue
+            if segment not in original:
+                continue
+            route.append(segment)
+            route_directions.append(
+                directions[index] if index < len(directions) else 0
+            )
+        cable_routes[cable] = (route, route_directions)
 
     _remove_old_helpers(harness)
 
@@ -243,8 +256,20 @@ def rebuild_bend_helpers(
     WireBundle.ensure_segment_group(harness)
     WireBundle.ensure_helper_group(harness)
     for cable in cables:
-        cable.Points = new_order
-        cable.SegmentDirections = [0] * len(new_order)
+        route, directions = cable_routes.get(cable, ([], []))
+        if route == original and directions and all(
+            int(direction) == 0 for direction in directions
+        ):
+            cable.Points = new_order
+            cable.SegmentDirections = [0] * len(new_order)
+        elif route == original and directions and all(
+            int(direction) % 2 for direction in directions
+        ):
+            cable.Points = list(reversed(new_order))
+            cable.SegmentDirections = [0] * len(new_order)
+        else:
+            cable.Points = route
+            cable.SegmentDirections = directions
         WireBundle.add_cable_to_harness(harness, cable)
     document.recompute()
     return new_order

@@ -15,6 +15,7 @@ SIMULATION_STEPS = 800
 SETTLE_STEPS = 300
 TIME_STEP = 1.0 / 120.0
 INWARD_ACCELERATION = 20.0
+SEEDED_INWARD_ACCELERATION = 6.0
 SPACE_DAMPING = 0.85
 SOLVER_ITERATIONS = 80
 COLLISION_SLOP = 0.01
@@ -91,7 +92,55 @@ def _spiral_positions(diameters, gap):
     return [tuple(point) for point in positions]
 
 
-def _packed_positions_uncached(diameters, gap):
+def _relax_separations(positions, radii, iterations=200):
+    points = [[float(point[0]), float(point[1])] for point in positions]
+    count = len(points)
+    for _ in range(iterations):
+        moved = False
+        for first in range(count):
+            for second in range(first + 1, count):
+                dx = points[second][0] - points[first][0]
+                dy = points[second][1] - points[first][1]
+                distance = math.hypot(dx, dy)
+                required = radii[first] + radii[second] + 1e-4
+                if distance >= required:
+                    continue
+                if distance < 1e-9:
+                    angle = (first * 2.399963229728653 + second) % (
+                        2.0 * math.pi
+                    )
+                    ux = math.cos(angle)
+                    uy = math.sin(angle)
+                    push = required / 2.0
+                else:
+                    ux = dx / distance
+                    uy = dy / distance
+                    push = (required - distance) / 2.0
+                points[first][0] -= ux * push
+                points[first][1] -= uy * push
+                points[second][0] += ux * push
+                points[second][1] += uy * push
+                moved = True
+        if not moved:
+            break
+    return [(point[0], point[1]) for point in points]
+
+
+def _resolve_initial_positions(diameters, gap, initial_positions):
+    spiral = _spiral_positions(diameters, gap)
+    if initial_positions is None:
+        return spiral
+    resolved = []
+    for index, fallback in enumerate(spiral):
+        value = initial_positions[index] if index < len(initial_positions) else None
+        if value is None:
+            resolved.append(fallback)
+        else:
+            resolved.append((float(value[0]), float(value[1])))
+    return resolved
+
+
+def _packed_positions_uncached(diameters, gap, initial_positions=None):
     pymunk = _load_pymunk()
     if pymunk is None:
         return None
@@ -102,7 +151,17 @@ def _packed_positions_uncached(diameters, gap):
 
     radii = np.asarray(diameters, dtype=float) / 2.0
     effective_radii = radii + max(0.0, gap) / 2.0
-    initial = _spiral_positions(diameters, gap)
+    seeded = initial_positions is not None
+    initial = _resolve_initial_positions(diameters, gap, initial_positions)
+    if seeded:
+        points = np.asarray(initial, dtype=float)
+        points = points - points.mean(axis=0)
+        max_radius = float(np.linalg.norm(points, axis=1).max())
+        spiral = np.asarray(_spiral_positions(diameters, gap), dtype=float)
+        target_radius = float(np.linalg.norm(spiral, axis=1).max())
+        if max_radius > 1e-9 and target_radius > 1e-9:
+            points *= target_radius / max_radius
+        initial = [tuple(point) for point in points]
 
     space = pymunk.Space()
     space.gravity = (0.0, 0.0)
@@ -124,8 +183,12 @@ def _packed_positions_uncached(diameters, gap):
         body = pymunk.Body(mass, moment)
         body.position = initial[index]
         body.velocity = (
-            float(velocity_generator.uniform(-0.5, 0.5)),
-            float(velocity_generator.uniform(-0.5, 0.5)),
+            (0.0, 0.0)
+            if seeded
+            else (
+                float(velocity_generator.uniform(-0.5, 0.5)),
+                float(velocity_generator.uniform(-0.5, 0.5)),
+            )
         )
         shape = pymunk.Circle(body, effective_radius)
         shape.friction = 0.4
@@ -133,13 +196,14 @@ def _packed_positions_uncached(diameters, gap):
         space.add(body, shape)
         bodies.append(body)
 
+    acceleration = SEEDED_INWARD_ACCELERATION if seeded else INWARD_ACCELERATION
     for _ in range(SIMULATION_STEPS):
         for body in bodies:
             distance = body.position.length
             if distance > 1e-9:
                 body.force += (
                     -body.position / distance
-                ) * (body.mass * INWARD_ACCELERATION)
+                ) * (body.mass * acceleration)
         space.step(TIME_STEP)
 
     for _ in range(SETTLE_STEPS):
@@ -149,20 +213,35 @@ def _packed_positions_uncached(diameters, gap):
         [[body.position.x, body.position.y] for body in bodies],
         dtype=float,
     )
+    positions = _relax_separations(positions, [float(radius) for radius in radii])
+    positions = np.asarray(positions, dtype=float)
     positions -= positions.mean(axis=0)
     return [tuple(point) for point in positions]
 
 
-def packed_positions(diameters, gap=0.0):
+def packed_positions(diameters, gap=0.0, initial_positions=None):
+    seed_key = None
+    if initial_positions is not None:
+        seed_key = tuple(
+            None
+            if point is None
+            else (round(float(point[0]), 6), round(float(point[1]), 6))
+            for point in initial_positions
+        )
     key = (
         tuple(round(float(diameter), 6) for diameter in diameters),
         round(float(gap), 6),
+        seed_key,
     )
     if key in _CACHE:
         return list(_CACHE[key])
 
     try:
-        positions = _packed_positions_uncached(diameters, gap)
+        positions = _packed_positions_uncached(
+            diameters,
+            gap,
+            initial_positions=initial_positions,
+        )
     except Exception:
         return None
     if positions is None:
@@ -290,6 +369,15 @@ def _fit_circle(positions, radii):
     return _minimum_enclosing_circle(points)
 
 
+def fit_radius_for_positions(positions, diameters):
+    radii = [float(diameter) / 2.0 for diameter in diameters]
+    points = _circle_samples(positions, radii)
+    if not points:
+        return None
+    _center, radius = _minimum_enclosing_circle(points)
+    return radius
+
+
 def packed_fit_radius(diameters):
     key = tuple(round(float(diameter), 6) for diameter in diameters)
     if key in _FIT_CACHE:
@@ -297,11 +385,9 @@ def packed_fit_radius(diameters):
     positions = packed_positions(diameters, 0.0)
     if positions is None:
         return None
-    radii = [float(diameter) / 2.0 for diameter in diameters]
-    points = _circle_samples(positions, radii)
-    if not points:
+    radius = fit_radius_for_positions(positions, diameters)
+    if radius is None:
         return None
-    _center, radius = _minimum_enclosing_circle(points)
     if len(_FIT_CACHE) >= CACHE_LIMIT:
         _FIT_CACHE.clear()
     _FIT_CACHE[key] = radius
