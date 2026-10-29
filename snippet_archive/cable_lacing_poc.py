@@ -2092,7 +2092,9 @@ def build_helper_aligned_lacing(
                 radial = radial.normalize()
         node_radials.append(radial)
 
-    radius = max(_bundle_outer_radius(segment) for segment in harness.Segments)
+    radius = max(
+        segment.Radius.Value for segment in harness.Segments
+    ) + (diameter / 2.0)
     outer_diameter = 2.0 * radius
     surface_points = [
         center_points[index] + node_radials[index] * radius
