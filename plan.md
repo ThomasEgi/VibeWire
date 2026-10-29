@@ -165,6 +165,7 @@ Goal: Provide a dedicated editor for the growing set of cable pattern and placem
 - [ ] **Slot editing**: Assign cables to explicit slots/offsets with constraints and clearance checks
 - [ ] **Mixed diameters**: Clearance-aware packing and warnings for circular and 2D patterns with different cable diameters
 - [ ] **Preview**: 2D cross-section preview in the task panel and optional 3D lane preview
+- [ ] **Dynamic wire-order recalculation**: Recompute the per-segment cable order automatically when routes, membership, diameters, gap or pattern settings change; minimize crossings and lane movement while preserving manual pins and stable slot IDs
 - [ ] **Persistence/recompute**: Store pattern settings and slot assignments; recompute all affected cables on change
 
 ### Technical Details
@@ -172,12 +173,17 @@ Goal: Provide a dedicated editor for the growing set of cable pattern and placem
 - Keep layout computation in the harness; store final offsets/slots as plain data/global vectors
 - Build a dedicated 2D cross-section editor for the selected segment
 - Use deterministic ordering and stable slot IDs so editing remains predictable
+- Dynamic order pass: when membership, route direction, diameter, gap or pattern changes, recompute each segment's wire order with a cost function that penalizes lane crossings, large lateral shifts from the previous/next segment, and long transition arcs; keep manual pins fixed and persist computed order separately from overrides
+- Recompute order in a debounced pass after layout changes and expose a preview of the proposed order before applying it
 - Add clearance/packing checks; circular patterns must account for mixed diameters
 - Keep the simple `Pattern` property (`Circular`/`Linear`) as the M2 baseline; M2b generalizes it
 
 ### Acceptance Criteria
 - Can choose and edit a pattern per harness and per bundle segment
 - Can edit per-segment cable order and explicit cable slots/offsets
+- Wire order recalculates automatically after route, membership, diameter, gap or pattern changes, with manual pins preserved
+- The recomputed order reduces lane crossings and avoids unnecessary cable movement between adjacent segments
+- Proposed wire-order changes can be previewed before applying
 - Mixed-diameter cables maintain requested clearance or show warnings
 - Pattern/placement changes recompute all affected cable geometry
 - Pattern and placement settings persist across save/reload
@@ -453,6 +459,7 @@ Goal: Support slotted wiring ducts and open channels where cables can enter, lea
 - [ ] **Closest-point attachment**: When a wire starts or ends on an open segment, compute the closest point on its centerline/axis and use that as the entry/exit point instead of the segment endpoints.
 - [ ] **Open segment bridging**: When a wire routes between two open segments, compute the shortest valid connecting line between their centerlines; use its endpoints as the bridge start/end and connect with bi-arcs.
 - [ ] **Branch-offs**: Support wires joining or leaving the main duct at arbitrary positions; create temporary/virtual branch segments where needed to approach at 90° or another configured angle.
+- [ ] **Physics-based bundle-exit strategy**: For wires leaving a bundle or branching into a new run, use a local 2D physics/packing simulation of the cross-section to choose the exit side, lane/slot and breakout order, enforcing clearance and minimizing crossings
 - [ ] **Lane preservation**: Keep per-wire lane offsets through open segments; entry/exit connectors must join the assigned lane.
 - [ ] **Auto-routing tool**: Dedicated mode where the user selects open segments and the system computes entry/exit points and bridging pieces, with preview and manual overrides.
 - [ ] **Constraints/validation**: Clamp points to segment extents, handle skew/non-intersecting segments, check bend radius, bridge length, clearance and collisions.
@@ -462,6 +469,9 @@ Goal: Support slotted wiring ducts and open channels where cables can enter, lea
 - Add a segment type and duct/slot properties to `WireBundleSegment`; provide open-channel visualization in addition to the current cylinder.
 - Use line-segment projection/closest-point math; for two open segments, compute the shortest line between them (constrained to both segment extents).
 - Treat entry/exit and 90° branch connectors as temporary/derived route pieces; do not persist them as user-defined bundle segments unless pinned.
+- Physics-based exit strategy: build a local 2D cross-section with variable-diameter circles, a shrinking outer boundary or radial pressure, and the exiting wires as biased/free bodies; solve with pymunk/Box2D, then map the resulting 2D lane positions to the 3D exit points and branch order
+- Use the physics result to propose breakout side/slot assignments and to detect clearance or crossing failures; keep the result deterministic with a seed and cache it until route or geometry changes
+- Keep a deterministic circular/linear fallback when the physics solve is unavailable or a manual exit override is set
 - Integrate with the harness lane layout: entry/exit points are offset to the wire's assigned lane.
 - Keep auto-routing separate from the manual point/bundle-segment routing workflow as a fallback.
 - Preview computed entry/exit points, bridge lines and temporary branches; allow the user to override them.
@@ -471,17 +481,19 @@ Goal: Support slotted wiring ducts and open channels where cables can enter, lea
 - A wire can attach to an open segment at the closest point rather than its endpoints.
 - Two open segments connect via the shortest valid bridge, with bi-arcs at both connector ends.
 - Wires can branch on/off at arbitrary points, including 90° approaches where required.
+- A physics-based exit proposal selects a clearance-valid exit side/slot and avoids unnecessary crossings, with a manual override available
+- Physics-based exit proposals are deterministic and recompute when the local bundle cross-section or routes change
 - Lane offsets are preserved through open segments and temporary connectors.
 - Duct/route/constraint changes recompute affected cables.
 - Auto-generated entry/exit points and temporary branches can be previewed and overridden.
 
 ## Future Milestones (High-level)
-- **M2b**: Dedicated harness pattern and placement editor (patterns, per-segment order, slot editing, preview)
+- **M2b**: Dedicated harness pattern and placement editor (patterns, per-segment order, slot editing, dynamic wire-order recalculation, preview)
 - **M2C**: Ferrule library, data-driven wire sizes and color coding
 - **M2D**: Tool transactions and undo for live-edited tool sessions
 - **M2E**: Wire destinations, harness/cable/connector identification and label-printer export
 - **M2F**: Harness forming and bend-radius rules from NASA-STD-8739.4A (bend radii, tie spacing, breakouts, coverings)
-- **M3**: Open bundle segments / duct auto-routing (closest-point attachment, shortest bridges, branch-offs)
+- **M3**: Open bundle segments / duct auto-routing (closest-point attachment, shortest bridges, branch-offs, physics-based bundle-exit strategy)
 - **M4**: Cable decomposition (bundle segments → cable-segments per cable with share/branch rules)
 - **M5**: Pathfinding/obstacle avoidance, properties (gauge/color), length, BOM, discrete cable lengths, wire loops, cable-clip placeholders, connector lengths, wire endpoint presets, stripped tips/ferrules, flat ribbon cable routing, foamboard/harness-board manufacturing plans
 - **M6**: Polish, docs, packaging
