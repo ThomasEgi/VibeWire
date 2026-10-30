@@ -7,7 +7,7 @@ import FreeCADGui as Gui
 import Part
 
 from .WireFrames import segment_basis
-from . import WireLayout, WireReducedDisplay
+from . import WireLayout, WireReducedDisplay, WireStrap
 from .WireGeometry import circles_hull
 from .WireRoute import (
     build_route_graph,
@@ -74,6 +74,13 @@ class WireHarnessProxy:
                 "HelperGroup",
                 "Harness",
                 "Group containing the lace helper segments",
+            )
+        if "StrapGroup" not in properties:
+            obj.addProperty(
+                "App::PropertyLink",
+                "StrapGroup",
+                "Harness",
+                "Group containing the generated wrapping straps",
             )
         if "BundleHullObject" not in properties:
             obj.addProperty(
@@ -146,6 +153,20 @@ class WireHarnessProxy:
             if current_pattern in ("Circular", "Linear", "Packed", "Packed Bundles")
             else "Circular"
         )
+        if "WrappingType" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "WrappingType",
+                "Harness",
+                "Bundle wrapping type",
+            )
+        current_wrapping = getattr(obj, "WrappingType", "None")
+        obj.WrappingType = ["None", "Straps"]
+        obj.WrappingType = (
+            current_wrapping
+            if current_wrapping in ("None", "Straps")
+            else "None"
+        )
         if "Layout" not in properties:
             obj.addProperty(
                 "App::PropertyMap",
@@ -183,6 +204,7 @@ class WireHarnessProxy:
             result = WireLayout.simple_layout(obj, cables, gap, pattern)
         self._apply_layout_result(obj, result, bundle_mode)
         self._update_reduced_display(obj, cables)
+        self._refresh_strap_objects(obj)
 
     def _apply_layout_result(self, obj, result, bundle_mode):
         for segment, radius in result.radii.items():
@@ -442,8 +464,26 @@ class WireHarnessProxy:
                 reduced and not circle_object.Shape.isNull(),
             )
 
+    @staticmethod
+    def _refresh_strap_objects(obj):
+        """Rebuild existing strap proxies after this pass has refreshed hulls."""
+        group = getattr(obj, "StrapGroup", None)
+        if group is None or not group.isValid():
+            return
+        for strap in list(group.Group):
+            proxy = getattr(strap, "Proxy", None)
+            if getattr(proxy, "Type", None) != WireStrap.WireStrapProxy.Type:
+                continue
+            try:
+                proxy.execute(strap)
+            except Exception:
+                pass
+
     def onChanged(self, obj, prop):
-        if prop == "DisplayMode":
+        if prop == "WrappingType":
+            ensure_strap_objects(obj)
+            obj.touch()
+        elif prop == "DisplayMode":
             self._applied_display_mode = None
             obj.touch()
         elif prop == "Pattern":
@@ -466,6 +506,8 @@ class WireHarnessProxy:
         self._add_properties(obj)
         ensure_segment_group(obj)
         ensure_helper_group(obj)
+        ensure_strap_group(obj)
+        ensure_strap_objects(obj)
         ensure_hull_objects(obj)
         ensure_reduced_bundle_object(obj)
         if "Cables" in obj.PropertiesList:
@@ -582,7 +624,7 @@ class ViewProviderWireBundle:
         if obj is None:
             return []
         children = []
-        for property_name in ("SegmentGroup", "HelperGroup"):
+        for property_name in ("SegmentGroup", "HelperGroup", "StrapGroup"):
             group = getattr(obj, property_name, None)
             if group is not None and group.isValid() and group not in children:
                 children.append(group)
@@ -663,10 +705,17 @@ class ViewProviderWireBundle:
         segment_names = [
             segment.Name for segment in obj.Segments if segment.isValid()
         ]
+        strap_group = getattr(obj, "StrapGroup", None)
+        strap_names = []
+        if strap_group is not None and strap_group.isValid():
+            strap_names = [
+                child.Name for child in strap_group.Group if child.isValid()
+            ]
         group_names = []
         for property_name in (
             "SegmentGroup",
             "HelperGroup",
+            "StrapGroup",
             "BundleHullObject",
             "OverallHullObject",
             "CableCircleObject",
@@ -680,7 +729,7 @@ class ViewProviderWireBundle:
             doc = App.getDocument(document_name)
             if doc is None:
                 return
-            for name in segment_names:
+            for name in segment_names + strap_names:
                 if doc.getObject(name) is not None:
                     try:
                         doc.removeObject(name)
@@ -945,6 +994,125 @@ def ensure_helper_group(harness):
     return group
 
 
+def ensure_strap_group(harness):
+    if harness is None or harness.Document is None:
+        return None
+    document = harness.Document
+    group = getattr(harness, "StrapGroup", None)
+    if group is None or not group.isValid() or group.Document is not document:
+        name = "Straps"
+        index = 1
+        while document.getObject(name) is not None:
+            name = f"Straps{index:03d}"
+            index += 1
+        group = document.addObject("App::DocumentObjectGroup", name)
+        group.Label = "Straps"
+        harness.StrapGroup = group
+        if App.GuiUp:
+            try:
+                group.ViewObject.Visibility = False
+            except Exception:
+                pass
+    return group
+
+
+def _remove_strap_object(strap):
+    if strap is None:
+        return
+    try:
+        document = strap.Document
+    except Exception:
+        return
+    if document is not None and document.getObject(strap.Name) is strap:
+        try:
+            document.removeObject(strap.Name)
+        except Exception:
+            pass
+
+
+def ensure_strap_objects(harness):
+    """Create/remove strap objects without touching the harness itself."""
+    group = ensure_strap_group(harness)
+    if group is None:
+        return []
+    if getattr(harness, "WrappingType", "None") != "Straps":
+        for child in list(group.Group):
+            _remove_strap_object(child)
+        group.Group = []
+        if App.GuiUp:
+            try:
+                group.ViewObject.Visibility = False
+            except Exception:
+                pass
+        return []
+
+    segments = [
+        segment
+        for segment in harness.Segments
+        if is_bundle_segment(segment) and not is_lace_helper(segment)
+    ]
+    existing = {}
+    for child in list(group.Group):
+        segment = getattr(child, "Segment", None)
+        if segment is not None:
+            existing[segment] = child
+
+    ordered = []
+    for segment in segments:
+        strap = existing.pop(segment, None)
+        proxy = getattr(strap, "Proxy", None) if strap is not None else None
+        needs_init = strap is not None and getattr(
+            getattr(strap, "ViewObject", None), "Proxy", None
+        ) is None
+        if (
+            strap is None
+            or not strap.isValid()
+            or strap.Document is not harness.Document
+            or getattr(proxy, "Type", None) != WireStrap.WireStrapProxy.Type
+        ):
+            if strap is not None:
+                _remove_strap_object(strap)
+            strap = harness.Document.addObject(
+                "Part::FeaturePython",
+                "HarnessStrap",
+            )
+            WireStrap.WireStrapProxy(strap)
+            needs_init = True
+            if App.GuiUp:
+                try:
+                    strap.ViewObject.ShapeColor = (0.08, 0.28, 0.62)
+                    strap.ViewObject.LineColor = (0.03, 0.12, 0.35)
+                    strap.ViewObject.Transparency = 0
+                except Exception:
+                    pass
+        strap.Segment = segment
+        strap.Label = "Strap %s" % segment.Label
+        if App.GuiUp and needs_init:
+            try:
+                view = strap.ViewObject
+                if getattr(view, "Proxy", None) is None:
+                    view.Proxy = 1
+                if getattr(view, "DisplayMode", None) is None:
+                    view.DisplayMode = "Flat Lines"
+                view.Visibility = True
+            except Exception:
+                pass
+        ordered.append(strap)
+
+    for strap in existing.values():
+        _remove_strap_object(strap)
+    for child in list(group.Group):
+        if child not in ordered:
+            _remove_strap_object(child)
+    group.Group = ordered
+    if App.GuiUp:
+        try:
+            group.ViewObject.Visibility = bool(ordered)
+        except Exception:
+            pass
+    return ordered
+
+
 def ensure_hull_objects(harness):
     if harness is None or harness.Document is None:
         return None, None, None
@@ -1021,6 +1189,7 @@ def create_wire_harness(document, label="Harness"):
     WireHarnessProxy(harness)
     ensure_segment_group(harness)
     ensure_helper_group(harness)
+    ensure_strap_group(harness)
     ensure_hull_objects(harness)
     ensure_reduced_bundle_object(harness)
     if App.GuiUp:

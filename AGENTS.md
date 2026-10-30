@@ -100,7 +100,8 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - Closing a tool deselects only the edited object, clears its current-item/background state, and leaves other selected objects selected.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`/`Packed`/`Packed Bundles`) and computed `Layout`.
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`/`Packed`/`Packed Bundles`), `WrappingType` (`None`/`Straps`), `StrapGroup` and computed `Layout`.
+- `WrappingType` defaults to `None`. `Straps` creates one `Part::FeaturePython` strap object per route segment, placed at the segment midpoint for now; placement rules are still pending. Strap objects use `WireStrapProxy` and depend only on their segment's `HullCurve`; `ensure_strap_objects` creates/removes them outside harness execution. After refreshing layout/hulls, the harness invokes existing strap proxies directly so they build from the current hulls without creating or removing objects inside execute. Straps are kept in the claimed `StrapGroup`. Each strap stores a hidden `StrapSignature`; unchanged hulls reuse the existing shape, so only changed hulls or the strap table trigger regeneration. New strap view providers are initialized with `ViewObject.Proxy=1`, `DisplayMode="Flat Lines"` and `Visibility=True`, otherwise the tree eye cannot show them.
 - `WireLayout.py` computes the layout; `WireBundle` applies the returned positions, hulls, placements and radii to the document objects.
 - `Packed` uses the optional pymunk 2D physics engine in `WirePacking.py`: a loose spiral seed is compacted into a touching cross-section with zero wire clearance; the packed offsets are shifted so the smallest-enclosing-circle center coincides with the segment axis, and segment display radius uses that circle. For branched harnesses, segments are processed from lowest to highest cable count; each cable is seeded from lower-count neighbours' projected entry points, higher-count neighbours are ignored, and adjacent segments with identical cable sets copy their section. U-turn joins transfer the neighbour's cross-section coordinates through travel-frame alignment instead of raw 3D projection. `Packed Bundles` builds each incoming lower-count bundle's convex hull (with a small skin margin), packs those hull polygons (with a SAT separation pass), then copies the source bundle's per-cable offsets into the packed hull centers for a coarser but branch-preserving layout. Hull bodies are free to rotate in the simulation; their final angles are applied to both the copied cable offsets and the drawn hull outlines. The harness `Gap` applies only to `Circular`/`Linear`. If pymunk is unavailable, the harness falls back to `Circular` and the harness panel shows a warning notice.
 - Cables link `cable.Harness`; the harness finds member cables through `InList` and never links them back.
@@ -137,6 +138,7 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `WireBendHelpers.py` rebuilds sparse lace helpers from the solved bends; `VibeWire_RegenerateLaceHelpers` is the toolbar/context command.
 - `WireColors.py` holds the primary/tracer palette and quadrant logic.
 - `WirePacking.py` provides the optional pymunk-backed `Packed` harness layout and pymunk availability checks.
+- `WireStrap.py` is the in-plugin copy of the convex-hull plastic strap generator with the corrected strap table.
 - `FerruleData.py` loads the checked-in ferrule JSON.
 - `WireSelection.py` provides the selection reconciler, helper remapping and hover previews.
 - `WireTaskWatchers.py` defines the contextual Tasks-panel groups and hover buttons.
@@ -238,6 +240,7 @@ Bundle segment endpoints are point references defined in global coordinates or r
 - `freecad/VibeWire/WireTaskWatchers.py` — contextual Tasks-panel tool groups and hover buttons.
 - `freecad/VibeWire/WireColors.py` — primary/tracer cable color palette and quadrant layouts.
 - `freecad/VibeWire/WirePacking.py` — optional pymunk-backed `Packed` harness layout.
+- `freecad/VibeWire/WireStrap.py` — reusable convex-hull strap generator and combined strap+head geometry.
 - `freecad/VibeWire/Resources/Data/ferrules_DIN46228_T4.json` — checked-in ferrule library.
 - `freecad/VibeWire/PointReference.py` — shared point-reference pick helpers and selection gates.
 - `tools/csv_to_ferrules_json.py` — example ferrule CSV-to-JSON converter.

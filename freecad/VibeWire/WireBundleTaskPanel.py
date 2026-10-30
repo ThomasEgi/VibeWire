@@ -13,6 +13,7 @@ from .PointReference import (
 from .WireBundle import (
     create_bundle_segment,
     create_wire_harness,
+    ensure_strap_objects,
     is_lace_helper,
     remove_bundle_segment,
     update_segment_dependencies,
@@ -105,6 +106,13 @@ class WireBundleTaskPanel:
         self.pattern_combo = QtGui.QComboBox()
         self.pattern_combo.addItems(["Circular", "Linear", "Packed", "Packed Bundles"])
         radius_form.addRow("Pattern:", self.pattern_combo)
+        self.wrapping_combo = QtGui.QComboBox()
+        self.wrapping_combo.addItems(["None", "Straps"])
+        self.wrapping_combo.setToolTip(
+            "None adds no wrapping. Straps adds one generated strap per route "
+            "segment; placement rules will be refined later."
+        )
+        radius_form.addRow("Wrapping:", self.wrapping_combo)
         self.display_combo = QtGui.QComboBox()
         self.display_combo.addItems(["Full Detail", "Reduced Bundle"])
         self.display_combo.setToolTip(
@@ -218,6 +226,8 @@ class WireBundleTaskPanel:
             self.gap_spin.setValue(self.bundle.Gap.Value)
         if "Pattern" in self.bundle.PropertiesList:
             self.pattern_combo.setCurrentText(self.bundle.Pattern)
+        if "WrappingType" in self.bundle.PropertiesList:
+            self.wrapping_combo.setCurrentText(self.bundle.WrappingType)
         if "DisplayMode" in self.bundle.PropertiesList:
             self.display_combo.setCurrentText(self.bundle.DisplayMode)
         self.display_combo.setEnabled(self.bundle.Pattern == "Packed Bundles")
@@ -640,6 +650,15 @@ class WireBundleTaskPanel:
             self.bundle.Pattern = ["Circular", "Linear", "Packed", "Packed Bundles"]
             self.bundle.Gap = self.gap_spin.value()
             self.bundle.Pattern = self.pattern_combo.currentText()
+            if "WrappingType" not in self.bundle.PropertiesList:
+                self.bundle.addProperty(
+                    "App::PropertyEnumeration",
+                    "WrappingType",
+                    "Harness",
+                    "Bundle wrapping type",
+                )
+            self.bundle.WrappingType = ["None", "Straps"]
+            self.bundle.WrappingType = self.wrapping_combo.currentText()
             if "DisplayMode" not in self.bundle.PropertiesList:
                 self.bundle.addProperty(
                     "App::PropertyEnumeration",
@@ -685,6 +704,7 @@ class WireBundleTaskPanel:
 
             ensure_segment_group(self.bundle)
             ensure_helper_group(self.bundle)
+            ensure_strap_objects(self.bundle)
             from .WireBendHelpers import rebuild_bend_helpers
 
             rebuild_bend_helpers(self.bundle)

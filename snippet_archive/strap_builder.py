@@ -18,6 +18,46 @@ def _signed_area(points):
     return area / 2.0
 
 
+def _line_intersection(a1, a2, b1, b2):
+    da = a2 - a1
+    db = b2 - b1
+    denominator = da.x * db.y - da.y * db.x
+    if abs(denominator) < 1e-12:
+        raise ValueError("parallel offset edges")
+    factor = ((b1.x - a1.x) * db.y - (b1.y - a1.y) * db.x) / denominator
+    return App.Vector(a1.x + da.x * factor, a1.y + da.y * factor, 0.0)
+
+
+def offset_convex_polygon(points, distance):
+    points = [_vector(point) for point in points]
+    if _signed_area(points) < 0.0:
+        points.reverse()
+    lines = []
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        edge = end - start
+        length = edge.Length
+        if length < 1e-12:
+            continue
+        normal = App.Vector(edge.y / length, -edge.x / length, 0.0)
+        lines.append((start + normal * distance, end + normal * distance))
+    if len(lines) != len(points):
+        raise ValueError("degenerate hull edge")
+    result = []
+    for index in range(len(points)):
+        previous = lines[index - 1]
+        current = lines[index]
+        result.append(
+            _line_intersection(
+                previous[0],
+                previous[1],
+                current[0],
+                current[1],
+            )
+        )
+    return result
+
+
 def _convex_hull_2d(points):
     unique = sorted(set((round(float(point.x), 9), round(float(point.y), 9)) for point in points))
     if len(unique) <= 1:
