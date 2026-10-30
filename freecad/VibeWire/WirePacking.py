@@ -10,9 +10,12 @@ _PYMUNK = None
 _PYMUNK_ERROR = None
 _CACHE = {}
 _FIT_CACHE = {}
+_SHAPE_CACHE = {}
 
 SIMULATION_STEPS = 800
 SETTLE_STEPS = 300
+SHAPE_SIMULATION_STEPS = 1500
+SHAPE_SETTLE_STEPS = 3000
 TIME_STEP = 1.0 / 120.0
 INWARD_ACCELERATION = 20.0
 SEEDED_INWARD_ACCELERATION = 6.0
@@ -21,6 +24,7 @@ SOLVER_ITERATIONS = 80
 COLLISION_SLOP = 0.01
 COLLISION_BIAS = 0.95
 INITIAL_GAP_MARGIN = 0.5
+HULL_MARGIN = 0.05
 CACHE_LIMIT = 128
 
 
@@ -367,6 +371,360 @@ def _fit_circle(positions, radii):
     if not points:
         return (0.0, 0.0), 0.0
     return _minimum_enclosing_circle(points)
+
+
+def fit_circle_for_positions(positions, diameters):
+    radii = [float(diameter) / 2.0 for diameter in diameters]
+    return _fit_circle(positions, radii)
+
+
+def _convex_hull_2d(points):
+    unique = sorted(
+        set((round(float(x), 9), round(float(y), 9)) for x, y in points)
+    )
+    if len(unique) <= 1:
+        return unique
+
+    def cross(origin, first, second):
+        return (
+            (first[0] - origin[0]) * (second[1] - origin[1])
+            - (first[1] - origin[1]) * (second[0] - origin[0])
+        )
+
+    lower = []
+    for point in unique:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0.0:
+            lower.pop()
+        lower.append(point)
+    upper = []
+    for point in reversed(unique):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0.0:
+            upper.pop()
+        upper.append(point)
+    hull = lower[:-1] + upper[:-1]
+    area = sum(
+        hull[index][0] * hull[(index + 1) % len(hull)][1]
+        - hull[(index + 1) % len(hull)][0] * hull[index][1]
+        for index in range(len(hull))
+    )
+    if area < 0.0:
+        hull.reverse()
+    return hull
+
+
+def _polygon_area_centroid(vertices):
+    count = len(vertices)
+    if count < 3:
+        if not vertices:
+            return 0.0, 0.0, 0.0
+        return (
+            sum(point[0] for point in vertices) / count,
+            sum(point[1] for point in vertices) / count,
+            0.0,
+        )
+    area2 = 0.0
+    cx = 0.0
+    cy = 0.0
+    for index in range(count):
+        x0, y0 = vertices[index]
+        x1, y1 = vertices[(index + 1) % count]
+        cross = x0 * y1 - x1 * y0
+        area2 += cross
+        cx += (x0 + x1) * cross
+        cy += (y0 + y1) * cross
+    area = area2 / 2.0
+    if abs(area) < 1e-12:
+        return (
+            sum(point[0] for point in vertices) / count,
+            sum(point[1] for point in vertices) / count,
+            0.0,
+        )
+    return cx / (6.0 * area), cy / (6.0 * area), abs(area)
+
+
+def bundle_hull(positions, diameters, samples=32):
+    if not positions:
+        return [], (0.0, 0.0)
+    angles = [
+        2.0 * math.pi * index / samples
+        for index in range(samples)
+    ]
+    points = []
+    for (x, y), diameter in zip(positions, diameters):
+        radius = max(0.0, float(diameter)) / 2.0 + HULL_MARGIN
+        for angle in angles:
+            points.append(
+                (
+                    x + radius * math.cos(angle),
+                    y + radius * math.sin(angle),
+                )
+            )
+    hull = _convex_hull_2d(points)
+    if len(hull) < 3:
+        cx = sum(point[0] for point in positions) / len(positions)
+        cy = sum(point[1] for point in positions) / len(positions)
+        radius = max(
+            [0.5]
+            + [
+                max(0.0, float(diameter)) / 2.0 + HULL_MARGIN
+                for diameter in diameters
+            ]
+        )
+        return (
+            [(radius, 0.0), (0.0, radius), (-radius, 0.0), (0.0, -radius)],
+            (cx, cy),
+        )
+    cx, cy, _area = _polygon_area_centroid(hull)
+    return (
+        [(point[0] - cx, point[1] - cy) for point in hull],
+        (cx, cy),
+    )
+
+
+def _shape_radius(shape):
+    if shape[0] == "circle":
+        return float(shape[1])
+    return max(
+        math.hypot(float(x), float(y)) for x, y in shape[1]
+    )
+
+
+def _shape_polygon(shape, samples=32):
+    if shape[0] == "circle":
+        radius = float(shape[1])
+        if radius <= 0.0:
+            radius = 1e-3
+        radius /= math.cos(math.pi / samples)
+        return [
+            (
+                radius * math.cos(2.0 * math.pi * index / samples),
+                radius * math.sin(2.0 * math.pi * index / samples),
+            )
+            for index in range(samples)
+        ]
+    return [(float(x), float(y)) for x, y in shape[1]]
+
+
+def _project_polygon(vertices, axis):
+    values = [x * axis[0] + y * axis[1] for x, y in vertices]
+    return min(values), max(values)
+
+
+def _polygon_overlap(first, second):
+    best = None
+    for vertices in (first, second):
+        for index in range(len(vertices)):
+            x0, y0 = vertices[index]
+            x1, y1 = vertices[(index + 1) % len(vertices)]
+            edge_x = x1 - x0
+            edge_y = y1 - y0
+            length = math.hypot(edge_x, edge_y)
+            if length < 1e-12:
+                continue
+            axis = (-edge_y / length, edge_x / length)
+            min_first, max_first = _project_polygon(first, axis)
+            min_second, max_second = _project_polygon(second, axis)
+            if max_first <= min_second + 1e-9 or max_second <= min_first + 1e-9:
+                return None
+            overlap = min(max_first, max_second) - max(min_first, min_second)
+            if best is None or overlap < best[2]:
+                first_center = _polygon_area_centroid(first)[:2]
+                second_center = _polygon_area_centroid(second)[:2]
+                direction = (
+                    (second_center[0] - first_center[0]) * axis[0]
+                    + (second_center[1] - first_center[1]) * axis[1]
+                )
+                sign = 1.0 if direction >= 0.0 else -1.0
+                best = (axis[0] * sign, axis[1] * sign, overlap)
+    return best
+
+
+def _relax_shape_positions(
+    shapes,
+    positions,
+    angles=None,
+    iterations=300,
+    margin=0.1,
+):
+    if angles is None:
+        angles = [0.0] * len(shapes)
+    polygons = []
+    for shape, angle in zip(shapes, angles):
+        vertices = _shape_polygon(shape)
+        if abs(angle) > 1e-12:
+            cosine = math.cos(angle)
+            sine = math.sin(angle)
+            vertices = [
+                (
+                    x * cosine - y * sine,
+                    x * sine + y * cosine,
+                )
+                for x, y in vertices
+            ]
+        polygons.append(vertices)
+    points = [[float(point[0]), float(point[1])] for point in positions]
+    for _ in range(iterations):
+        moved = False
+        for first in range(len(polygons)):
+            for second in range(first + 1, len(polygons)):
+                first_poly = [
+                    (x + points[first][0], y + points[first][1])
+                    for x, y in polygons[first]
+                ]
+                second_poly = [
+                    (x + points[second][0], y + points[second][1])
+                    for x, y in polygons[second]
+                ]
+                overlap = _polygon_overlap(first_poly, second_poly)
+                if overlap is None:
+                    continue
+                dx, dy, depth = overlap
+                push = depth / 2.0 + margin
+                points[first][0] -= dx * push
+                points[first][1] -= dy * push
+                points[second][0] += dx * push
+                points[second][1] += dy * push
+                moved = True
+        if not moved:
+            break
+    return [(point[0], point[1]) for point in points]
+
+
+def _packed_shapes_uncached(shapes, initial_positions=None):
+    pymunk = _load_pymunk()
+    if pymunk is None:
+        return None
+
+    count = len(shapes)
+    if count <= 1:
+        return [(0.0, 0.0)] if count else []
+
+    effective_diameters = [2.0 * _shape_radius(shape) for shape in shapes]
+    seeded = initial_positions is not None
+    initial = _resolve_initial_positions(
+        effective_diameters,
+        0.0,
+        initial_positions,
+    )
+    if seeded:
+        points = np.asarray(initial, dtype=float)
+        points = points - points.mean(axis=0)
+        max_radius = float(np.linalg.norm(points, axis=1).max())
+        spiral = np.asarray(
+            _spiral_positions(effective_diameters, 0.0),
+            dtype=float,
+        )
+        target_radius = float(np.linalg.norm(spiral, axis=1).max())
+        if max_radius > 1e-9 and target_radius > 1e-9:
+            points *= target_radius / max_radius
+        initial = [tuple(point) for point in points]
+
+    space = pymunk.Space()
+    space.gravity = (0.0, 0.0)
+    space.damping = SPACE_DAMPING
+    space.iterations = SOLVER_ITERATIONS
+    space.collision_slop = COLLISION_SLOP
+    space.collision_bias = COLLISION_BIAS
+
+    bodies = []
+    velocity_generator = np.random.default_rng(17)
+    for index, shape in enumerate(shapes):
+        if shape[0] == "circle":
+            radius = max(float(shape[1]), 1e-3)
+            mass = max(math.pi * radius * radius, 1e-6)
+            moment = pymunk.moment_for_circle(mass, 0.0, radius)
+            body = pymunk.Body(mass, moment)
+            physics_shape = pymunk.Circle(body, radius)
+        else:
+            vertices = [(float(x), float(y)) for x, y in shape[1]]
+            _cx, _cy, area = _polygon_area_centroid(vertices)
+            mass = max(area, 1e-6)
+            moment = pymunk.moment_for_poly(mass, vertices)
+            body = pymunk.Body(mass, moment)
+            physics_shape = pymunk.Poly(body, vertices)
+        body.position = initial[index]
+        body.velocity = (
+            (0.0, 0.0)
+            if seeded
+            else (
+                float(velocity_generator.uniform(-0.5, 0.5)),
+                float(velocity_generator.uniform(-0.5, 0.5)),
+            )
+        )
+        physics_shape.friction = 0.4
+        physics_shape.elasticity = 0.0
+        space.add(body, physics_shape)
+        bodies.append(body)
+
+    acceleration = SEEDED_INWARD_ACCELERATION if seeded else INWARD_ACCELERATION
+    for _ in range(SHAPE_SIMULATION_STEPS):
+        for body in bodies:
+            distance = body.position.length
+            if distance > 1e-9:
+                body.force += (
+                    -body.position / distance
+                ) * (body.mass * acceleration)
+        space.step(TIME_STEP)
+
+    for _ in range(SHAPE_SETTLE_STEPS):
+        space.step(TIME_STEP)
+
+    positions = np.array(
+        [[body.position.x, body.position.y] for body in bodies],
+        dtype=float,
+    )
+    angles = [float(body.angle) for body in bodies]
+    positions -= positions.mean(axis=0)
+    positions = _relax_shape_positions(
+        shapes,
+        positions,
+        angles=angles,
+    )
+    positions = np.asarray(positions, dtype=float)
+    positions -= positions.mean(axis=0)
+    return [
+        (float(point[0]), float(point[1]), angle)
+        for point, angle in zip(positions, angles)
+    ]
+
+
+def packed_shapes(shapes, initial_positions=None):
+    seed_key = None
+    if initial_positions is not None:
+        seed_key = tuple(
+            None
+            if point is None
+            else (round(float(point[0]), 6), round(float(point[1]), 6))
+            for point in initial_positions
+        )
+    shape_key = []
+    for shape in shapes:
+        if shape[0] == "circle":
+            shape_key.append(("circle", round(float(shape[1]), 6)))
+        else:
+            shape_key.append(
+                (
+                    "poly",
+                    tuple(
+                        (round(float(x), 6), round(float(y), 6))
+                        for x, y in shape[1]
+                    ),
+                )
+            )
+    key = (tuple(shape_key), seed_key)
+    if key in _SHAPE_CACHE:
+        return list(_SHAPE_CACHE[key])
+
+    try:
+        positions = _packed_shapes_uncached(shapes, initial_positions)
+    except Exception:
+        return None
+    if positions is None:
+        return None
+    if len(_SHAPE_CACHE) >= CACHE_LIMIT:
+        _SHAPE_CACHE.clear()
+    _SHAPE_CACHE[key] = tuple(positions)
+    return list(positions)
 
 
 def fit_radius_for_positions(positions, diameters):

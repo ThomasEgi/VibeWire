@@ -103,8 +103,11 @@ class WireBundleTaskPanel:
         self.gap_spin.setSuffix(" mm")
         radius_form.addRow("Cable gap:", self.gap_spin)
         self.pattern_combo = QtGui.QComboBox()
-        self.pattern_combo.addItems(["Circular", "Linear", "Packed"])
+        self.pattern_combo.addItems(["Circular", "Linear", "Packed", "Packed Bundles"])
         radius_form.addRow("Pattern:", self.pattern_combo)
+        self.display_combo = QtGui.QComboBox()
+        self.display_combo.addItems(["Full Detail", "Reduced Bundle"])
+        radius_form.addRow("Display mode:", self.display_combo)
         layout.addLayout(radius_form)
 
         self.packing_notice = QtGui.QLabel("")
@@ -149,10 +152,16 @@ class WireBundleTaskPanel:
         Gui.Selection.addObserver(self._selection_observer)
 
     def _on_pattern_changed(self, _text):
+        if (
+            self.pattern_combo.currentText() != "Packed Bundles"
+            and self.display_combo.currentText() == "Reduced Bundle"
+        ):
+            self.display_combo.setCurrentText("Full Detail")
         self._update_packing_notice()
 
     def _update_packing_notice(self):
-        if self.pattern_combo.currentText() != "Packed":
+        pattern = self.pattern_combo.currentText()
+        if pattern not in ("Packed", "Packed Bundles"):
             self.packing_notice.setText("")
             self.packing_notice.setVisible(False)
             return
@@ -161,10 +170,17 @@ class WireBundleTaskPanel:
             self.packing_notice.setText(unavailable_message())
         else:
             self.packing_notice.setStyleSheet("color: #555555;")
-            self.packing_notice.setText(
-                "Packed uses zero clearance between wires. Cable gap applies "
-                "to Circular and Linear patterns."
-            )
+            if pattern == "Packed Bundles":
+                self.packing_notice.setText(
+                    "Packed Bundles packs incoming bundles as convex hulls, then "
+                    "copies their wire offsets. Cable gap applies to Circular and "
+                    "Linear patterns."
+                )
+            else:
+                self.packing_notice.setText(
+                    "Packed uses zero clearance between wires. Cable gap applies "
+                    "to Circular and Linear patterns."
+                )
         self.packing_notice.setVisible(True)
 
     def _update_button_labels(self):
@@ -197,6 +213,13 @@ class WireBundleTaskPanel:
             self.gap_spin.setValue(self.bundle.Gap.Value)
         if "Pattern" in self.bundle.PropertiesList:
             self.pattern_combo.setCurrentText(self.bundle.Pattern)
+        if "DisplayMode" in self.bundle.PropertiesList:
+            self.display_combo.setCurrentText(self.bundle.DisplayMode)
+        if (
+            self.bundle.Pattern != "Packed Bundles"
+            and self.display_combo.currentText() == "Reduced Bundle"
+        ):
+            self.display_combo.setCurrentText("Full Detail")
         self._update_packing_notice()
         self._update_list()
         if self.segments:
@@ -608,9 +631,21 @@ class WireBundleTaskPanel:
                     "Harness",
                     "Cable arrangement pattern",
                 )
-            self.bundle.Pattern = ["Circular", "Linear", "Packed"]
+            self.bundle.Pattern = ["Circular", "Linear", "Packed", "Packed Bundles"]
             self.bundle.Gap = self.gap_spin.value()
             self.bundle.Pattern = self.pattern_combo.currentText()
+            if "DisplayMode" not in self.bundle.PropertiesList:
+                self.bundle.addProperty(
+                    "App::PropertyEnumeration",
+                    "DisplayMode",
+                    "Harness",
+                    "Harness display detail",
+                )
+            self.bundle.DisplayMode = ["Full Detail", "Reduced Bundle"]
+            if self.bundle.Pattern == "Packed Bundles":
+                self.bundle.DisplayMode = self.display_combo.currentText()
+            else:
+                self.bundle.DisplayMode = "Full Detail"
 
             panel_objects = []
             for entry, (start, end) in zip(self.segments, segment_points):
