@@ -152,7 +152,7 @@ def triangle(a, b, c):
     except Exception:
         return None
 
-def reduced_transition_solids(
+def reduced_transition_shapes(
     hulls,
     counts,
     connections,
@@ -428,19 +428,7 @@ def reduced_transition_solids(
         if not faces:
             continue
         try:
-            shell = Part.makeShell(faces)
-            shell.sewShape()
-            if (
-                shell.isNull()
-                or not shell.isValid()
-                or not shell.isClosed()
-            ):
-                continue
-            solid = Part.makeSolid(shell)
-            if solid.isValid():
-                solids.append(solid)
-            else:
-                solids.append(shell)
+            solids.append(Part.makeCompound(faces))
         except Exception:
             pass
     return solids

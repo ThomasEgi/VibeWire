@@ -44,6 +44,12 @@ SUPPORT_OBJECT_PROPERTIES = (
     "EndFerruleSleeve",
 )
 
+DIAGNOSTIC_HELPER_PROPERTIES = (
+    "PathObject",
+    "BadRadiusObject",
+    "BadLengthObject",
+)
+
 
 class WireCableProxy:
     """Document object that rebuilds path and cable geometry from bundle segments."""
@@ -472,6 +478,16 @@ class WireCableProxy:
         finally:
             self._executing = False
 
+    @staticmethod
+    def _reduced_display(obj):
+        harness = getattr(obj, "Harness", None)
+        return (
+            is_harness(harness)
+            and getattr(harness, "Pattern", None) == "Packed Bundles"
+            and getattr(harness, "DisplayMode", "Full Detail")
+            == "Reduced Bundle"
+        )
+
     def _rebuild(self, obj):
         route = list(obj.Points)
         if not route:
@@ -658,9 +674,10 @@ class WireCableProxy:
         end_settings = self._tip_settings(obj, "EndTip", end_tip_length)
         start_offset = start_settings["trim"]
         end_offset = end_settings["trim"]
+        reduced = self._reduced_display(obj)
         geometry_creator = creator
         geometry_wire = full_wire
-        if start_offset > 0.0 or end_offset > 0.0:
+        if not reduced and (start_offset > 0.0 or end_offset > 0.0):
             if needs_open_routing:
                 try:
                     geometry_wire = self._trim_open_route(
@@ -689,9 +706,16 @@ class WireCableProxy:
 
         path_obj = obj.PathObject
         if _is_valid(path_obj, obj.Document):
-            _set_shape(path_obj, geometry_wire)
+            _set_shape(
+                path_obj,
+                Part.Shape() if reduced else geometry_wire,
+            )
 
-        show_solid = obj.BuildCable and not getattr(obj, "Preview", False)
+        show_solid = (
+            not reduced
+            and obj.BuildCable
+            and not getattr(obj, "Preview", False)
+        )
         if show_solid:
             cable = geometry_creator.make_cable(
                 geometry_wire, diameter=obj.Diameter.Value
@@ -745,14 +769,18 @@ class WireCableProxy:
         bad_results = creator.check_wire()
         radius_shapes = []
         length_shapes = []
-        for result in bad_results:
-            shape = creator.make_bad_arc_shape(result, diameter=obj.Diameter.Value)
-            if shape is None:
-                continue
-            if 1 in result["failed_tests"]:
-                radius_shapes.append(shape)
-            else:
-                length_shapes.append(shape)
+        if not reduced:
+            for result in bad_results:
+                shape = creator.make_bad_arc_shape(
+                    result,
+                    diameter=obj.Diameter.Value,
+                )
+                if shape is None:
+                    continue
+                if 1 in result["failed_tests"]:
+                    radius_shapes.append(shape)
+                else:
+                    length_shapes.append(shape)
         self._set_bad_shapes(obj, radius_shapes, length_shapes)
 
         length, minimum_radius = creator.measure()
@@ -1624,6 +1652,8 @@ def hide_support_objects(cable):
             helpers.append(obj)
             try:
                 obj.ViewObject.ShowInTree = False
+                if property_name in DIAGNOSTIC_HELPER_PROPERTIES:
+                    obj.ViewObject.Visibility = False
             except Exception:
                 pass
 

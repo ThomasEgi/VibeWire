@@ -89,6 +89,13 @@ class WireHarnessProxy:
                 "Harness",
                 "Display object for overall segment hulls",
             )
+        if "CableCircleObject" not in properties:
+            obj.addProperty(
+                "App::PropertyLink",
+                "CableCircleObject",
+                "Harness",
+                "Display object for cable cross-section circles",
+            )
         if "ReducedBundleObject" not in properties:
             obj.addProperty(
                 "App::PropertyLink",
@@ -180,11 +187,15 @@ class WireHarnessProxy:
     def _apply_layout_result(self, obj, result, bundle_mode):
         for segment, radius in result.radii.items():
             self._set_segment_radius(segment, radius)
-        for segment, positions in result.positions_by_segment.items():
-            diameters = [
-                max(0.0, cable.Diameter.Value)
-                for cable in result.users.get(segment, [])
-            ]
+        for segment, segment_positions in result.positions_by_segment.items():
+            positions = []
+            diameters = []
+            for cable in result.users.get(segment, []):
+                position = segment_positions.get(cable)
+                if position is None:
+                    continue
+                positions.append(position)
+                diameters.append(max(0.0, cable.Diameter.Value))
             self._update_segment_section(segment, positions, diameters)
         for segment in result.segments:
             if result.users.get(segment):
@@ -205,13 +216,43 @@ class WireHarnessProxy:
                 if shape is None or shape.isNull():
                     continue
                 overall_hull_wires.append(shape)
+            circle_wires = []
+            if getattr(obj, "DisplayMode", "Full Detail") == "Reduced Bundle":
+                for segment, positions in result.positions_by_segment.items():
+                    if is_lace_helper(segment):
+                        continue
+                    start_obj = segment.Start
+                    end_obj = segment.End
+                    if start_obj is None or end_obj is None:
+                        continue
+                    start = start_obj.getGlobalPlacement().Base
+                    end = end_obj.getGlobalPlacement().Base
+                    direction = end - start
+                    length = direction.Length
+                    if length < 1e-9:
+                        continue
+                    direction = direction / length
+                    side, normal = segment_basis(segment)
+                    for cable, (x, y) in positions.items():
+                        radius = max(0.0, cable.Diameter.Value) / 2.0
+                        if radius <= 1e-9:
+                            continue
+                        for base in (start, end):
+                            center = base + side * x + normal * y
+                            try:
+                                circle_wires.append(
+                                    Part.makeCircle(radius, center, direction)
+                                )
+                            except Exception:
+                                pass
             self._set_hull_overlays(
                 obj,
                 result.bundle_hull_wires,
                 overall_hull_wires,
+                circle_wires,
             )
         else:
-            self._set_hull_overlays(obj, [], [])
+            self._set_hull_overlays(obj, [], [], [])
         self._packed_placements = result.placements
         obj.Layout = result.layout
 
@@ -250,8 +291,15 @@ class WireHarnessProxy:
 
 
     @staticmethod
-    def _set_hull_overlays(harness, bundle_wires, overall_wires):
-        bundle_object, overall_object = ensure_hull_objects(harness)
+    def _set_hull_overlays(
+        harness,
+        bundle_wires,
+        overall_wires,
+        circle_wires=None,
+    ):
+        bundle_object, overall_object, circle_object = ensure_hull_objects(
+            harness
+        )
 
         def apply_shape(target, wires):
             if target is None:
@@ -268,6 +316,7 @@ class WireHarnessProxy:
 
         apply_shape(bundle_object, bundle_wires)
         apply_shape(overall_object, overall_wires)
+        apply_shape(circle_object, circle_wires or [])
 
     def _update_reduced_display(self, obj, cables):
         mode = getattr(obj, "DisplayMode", "Full Detail")
@@ -300,9 +349,9 @@ class WireHarnessProxy:
                 positions_by_segment,
                 ordered,
             )
-            solids = WireReducedDisplay.reduced_bundle_solids(hulls)
-            solids.extend(
-                WireReducedDisplay.reduced_transition_solids(
+            shapes = WireReducedDisplay.reduced_bundle_solids(hulls)
+            shapes.extend(
+                WireReducedDisplay.reduced_transition_shapes(
                     hulls,
                     counts,
                     connections,
@@ -315,8 +364,8 @@ class WireHarnessProxy:
             if reduced_object is not None:
                 try:
                     reduced_object.Shape = (
-                        Part.makeCompound(solids)
-                        if solids
+                        Part.makeCompound(shapes)
+                        if shapes
                         else Part.Shape()
                     )
                 except Exception:
@@ -327,14 +376,29 @@ class WireHarnessProxy:
             except Exception:
                 pass
         applied = getattr(self, "_applied_display_mode", None)
-        if mode != applied:
+        if mode != applied or mode == "Reduced Bundle":
             self._apply_display_visibility(obj, mode)
         self._applied_display_mode = mode
+
+    @staticmethod
+    def _set_visibility(target, visible):
+        if target is None:
+            return
+        try:
+            view = target.ViewObject
+            if bool(view.Visibility) != bool(visible):
+                view.Visibility = bool(visible)
+        except Exception:
+            pass
 
     def _apply_display_visibility(self, obj, mode):
         if not App.GuiUp:
             return
-        from .WireCable import SUPPORT_OBJECT_PROPERTIES, find_container
+        from .WireCable import (
+            DIAGNOSTIC_HELPER_PROPERTIES,
+            SUPPORT_OBJECT_PROPERTIES,
+            find_container,
+        )
 
         reduced = mode == "Reduced Bundle"
         cables = [item for item in obj.InList if is_wire_cable(item)]
@@ -343,52 +407,40 @@ class WireHarnessProxy:
             container = find_container(cable)
             if container is not None:
                 containers.add(container)
-            try:
-                cable.ViewObject.Visibility = not reduced
-            except Exception:
-                pass
+            self._set_visibility(cable, not reduced)
             for property_name in ("StartTip", "EndTip"):
                 tip = getattr(cable, property_name, None)
                 if tip is not None:
-                    try:
-                        tip.ViewObject.Visibility = not reduced
-                    except Exception:
-                        pass
+                    self._set_visibility(tip, not reduced)
             for property_name in SUPPORT_OBJECT_PROPERTIES:
                 helper = getattr(cable, property_name, None)
-                if helper is not None:
-                    try:
-                        helper.ViewObject.Visibility = not reduced
-                    except Exception:
-                        pass
+                if helper is None:
+                    continue
+                if property_name in DIAGNOSTIC_HELPER_PROPERTIES:
+                    self._set_visibility(helper, False)
+                elif reduced:
+                    self._set_visibility(helper, False)
         for container in containers:
-            try:
-                container.ViewObject.Visibility = not reduced
-            except Exception:
-                pass
+            self._set_visibility(container, not reduced)
         helper_group = getattr(obj, "HelperGroup", None)
-        if helper_group is not None:
-            try:
-                helper_group.ViewObject.Visibility = not reduced
-            except Exception:
-                pass
+        if helper_group is not None and reduced:
+            self._set_visibility(helper_group, False)
         reduced_object = getattr(obj, "ReducedBundleObject", None)
         if reduced_object is not None:
-            try:
-                reduced_object.ViewObject.Visibility = (
-                    reduced and not reduced_object.Shape.isNull()
-                )
-            except Exception:
-                pass
-        for property_name in ("BundleHullObject", "OverallHullObject"):
-            overlay = getattr(obj, property_name, None)
-            if overlay is not None:
-                try:
-                    overlay.ViewObject.Visibility = (
-                        not reduced and not overlay.Shape.isNull()
-                    )
-                except Exception:
-                    pass
+            self._set_visibility(
+                reduced_object,
+                reduced and not reduced_object.Shape.isNull(),
+            )
+        if reduced:
+            for property_name in ("BundleHullObject", "OverallHullObject"):
+                overlay = getattr(obj, property_name, None)
+                self._set_visibility(overlay, False)
+        circle_object = getattr(obj, "CableCircleObject", None)
+        if circle_object is not None:
+            self._set_visibility(
+                circle_object,
+                reduced and not circle_object.Shape.isNull(),
+            )
 
     def onChanged(self, obj, prop):
         if prop == "DisplayMode":
@@ -534,7 +586,11 @@ class ViewProviderWireBundle:
             group = getattr(obj, property_name, None)
             if group is not None and group.isValid() and group not in children:
                 children.append(group)
-        for property_name in ("BundleHullObject", "OverallHullObject"):
+        for property_name in (
+            "BundleHullObject",
+            "OverallHullObject",
+            "CableCircleObject",
+        ):
             hull_object = getattr(obj, property_name, None)
             if (
                 hull_object is not None
@@ -613,6 +669,7 @@ class ViewProviderWireBundle:
             "HelperGroup",
             "BundleHullObject",
             "OverallHullObject",
+            "CableCircleObject",
             "ReducedBundleObject",
         ):
             group = getattr(obj, property_name, None)
@@ -869,6 +926,11 @@ def ensure_helper_group(harness):
         group = document.addObject("App::DocumentObjectGroup", name)
         group.Label = "Lace Helpers"
         harness.HelperGroup = group
+        if App.GuiUp:
+            try:
+                group.ViewObject.Visibility = False
+            except Exception:
+                pass
     desired = [
         segment for segment in harness.Segments if is_lace_helper(segment)
     ]
@@ -885,20 +947,25 @@ def ensure_helper_group(harness):
 
 def ensure_hull_objects(harness):
     if harness is None or harness.Document is None:
-        return None, None
+        return None, None, None
     document = harness.Document
 
-    def ensure(property_name, name, label, color):
+    def ensure(property_name, name, label, color, line_width=2):
         obj = getattr(harness, property_name, None)
         if obj is None or not obj.isValid() or obj.Document is not document:
             obj = document.addObject("Part::Feature", name)
             obj.Label = label
             setattr(harness, property_name, obj)
+            if App.GuiUp:
+                try:
+                    obj.ViewObject.Visibility = False
+                except Exception:
+                    pass
         if App.GuiUp:
             try:
                 obj.ViewObject.Selectable = False
                 obj.ViewObject.LineColor = color
-                obj.ViewObject.LineWidth = 2
+                obj.ViewObject.LineWidth = line_width
                 obj.ViewObject.ShapeColor = color
             except Exception:
                 pass
@@ -916,7 +983,14 @@ def ensure_hull_objects(harness):
         "Overall Hull",
         (1.0, 0.55, 0.0),
     )
-    return bundle_object, overall_object
+    circle_object = ensure(
+        "CableCircleObject",
+        "CableCircles",
+        "Cable Circles",
+        (0.1, 0.65, 1.0),
+        1.5,
+    )
+    return bundle_object, overall_object, circle_object
 
 
 def ensure_reduced_bundle_object(harness):

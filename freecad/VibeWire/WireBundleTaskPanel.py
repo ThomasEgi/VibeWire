@@ -107,6 +107,12 @@ class WireBundleTaskPanel:
         radius_form.addRow("Pattern:", self.pattern_combo)
         self.display_combo = QtGui.QComboBox()
         self.display_combo.addItems(["Full Detail", "Reduced Bundle"])
+        self.display_combo.setToolTip(
+            "Reduced Bundle skips full-detail cable geometry but still "
+            "computes paths, lengths and bend-radius checks. Available for "
+            "Packed Bundles."
+        )
+        self.display_combo.setEnabled(False)
         radius_form.addRow("Display mode:", self.display_combo)
         layout.addLayout(radius_form)
 
@@ -152,10 +158,9 @@ class WireBundleTaskPanel:
         Gui.Selection.addObserver(self._selection_observer)
 
     def _on_pattern_changed(self, _text):
-        if (
-            self.pattern_combo.currentText() != "Packed Bundles"
-            and self.display_combo.currentText() == "Reduced Bundle"
-        ):
+        packed_bundles = self.pattern_combo.currentText() == "Packed Bundles"
+        self.display_combo.setEnabled(packed_bundles)
+        if not packed_bundles and self.display_combo.currentText() == "Reduced Bundle":
             self.display_combo.setCurrentText("Full Detail")
         self._update_packing_notice()
 
@@ -215,6 +220,7 @@ class WireBundleTaskPanel:
             self.pattern_combo.setCurrentText(self.bundle.Pattern)
         if "DisplayMode" in self.bundle.PropertiesList:
             self.display_combo.setCurrentText(self.bundle.DisplayMode)
+        self.display_combo.setEnabled(self.bundle.Pattern == "Packed Bundles")
         if (
             self.bundle.Pattern != "Packed Bundles"
             and self.display_combo.currentText() == "Reduced Bundle"
