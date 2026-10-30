@@ -37,9 +37,21 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 
 ### Bi-Arc Solver
 - Custom Python implementation; no FreeCAD built-in bi-arc solver.
+- Shared low-level arc/bi-arc primitives live in `WirePathMath.py`.
+- `WireCreator` and `WireTransitions` are the path-building entry points and use the same primitives.
 - Computes a joint point and one or two arc segments for G1 continuity.
 - Falls back to a straight line when the geometry is degenerate or colinear.
-- `WireCable` uses the same solver between consecutive bundle-segment runs.
+- `WireCable` uses the shared primitives between consecutive bundle-segment runs.
+
+### Shared Geometry, Route and Layout Modules
+- `WireGeometry.py` — canonical unit-vector policy, 2D convex hull/centroid, circle sampling, rigid 2D fit.
+- `WireTypes.py` — object type predicates and role constants; avoids importing the object layer from pure modules.
+- `WireFrames.py` — segment basis, averaged reference axes and manual orientation roll.
+- `WireRoute.py` — cable route parsing, harness route graph, facing endpoints and the `segment|cable` layout codec.
+- `WireLayout.py` — circular/linear/packed/packed-bundle layout policy; returns a `LayoutResult` with positions, hulls, placements, radii and overlay wires.
+- `WirePacking.py` — optional pymunk physics and generic shape packing only.
+- `WireReducedDisplay.py` — reduced hulls, prism solids, bi-arc transition solids and RMF frames.
+- `WireBundle.py` — persistent harness/segment objects, layout application, groups, display visibility and view providers. Layout computation is delegated to `WireLayout`; reduced geometry to `WireReducedDisplay`.
 
 ### Sweep Generation
 - Uses `Part.makeCircle` for the profile and `Part.Wire.makePipeShell` for the sweep.
@@ -88,7 +100,8 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - Closing a tool deselects only the edited object, clears its current-item/background state, and leaves other selected objects selected.
 
 ### Harness Object
-- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`/`Packed`) and computed `Layout`.
+- `WireBundle.py` defines `WireHarness` (`App::FeaturePython`, proxy type `WireHarness`) with `Segments`, `SegmentGroup`, `CableOrder`, `Gap`, `Pattern` (`Circular`/`Linear`/`Packed`/`Packed Bundles`) and computed `Layout`.
+- `WireLayout.py` computes the layout; `WireBundle` applies the returned positions, hulls, placements and radii to the document objects.
 - `Packed` uses the optional pymunk 2D physics engine in `WirePacking.py`: a loose spiral seed is compacted into a touching cross-section with zero wire clearance; the packed offsets are shifted so the smallest-enclosing-circle center coincides with the segment axis, and segment display radius uses that circle. For branched harnesses, segments are processed from lowest to highest cable count; each cable is seeded from lower-count neighbours' projected entry points, higher-count neighbours are ignored, and adjacent segments with identical cable sets copy their section. U-turn joins transfer the neighbour's cross-section coordinates through travel-frame alignment instead of raw 3D projection. `Packed Bundles` builds each incoming lower-count bundle's convex hull (with a small skin margin), packs those hull polygons (with a SAT separation pass), then copies the source bundle's per-cable offsets into the packed hull centers for a coarser but branch-preserving layout. Hull bodies are free to rotate in the simulation; their final angles are applied to both the copied cable offsets and the drawn hull outlines. The harness `Gap` applies only to `Circular`/`Linear`. If pymunk is unavailable, the harness falls back to `Circular` and the harness panel shows a warning notice.
 - Cables link `cable.Harness`; the harness finds member cables through `InList` and never links them back.
 - `Layout` stores lane offset vectors keyed by `segmentName|cableName`; cables shift both bundle-run endpoints by their offset. The harness also computes each segment's `HullCurve` from the cable offsets and diameters for later covering/exit work.
@@ -117,6 +130,8 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - `WireCable` provides the persistent object and double-click editing.
 - `WireHarness` is the layout authority and owns the straight segment objects.
 - `WireBundleTaskPanel` edits harness route segments, visibility group, per-segment radius/MaxCables, gap, pattern and display mode; it excludes auto-generated lace helpers from the editor list, rebuilds them on Update Harness, syncs list/3D selection, notes that `Packed` uses zero clearance, and warns when `Packed` is selected without pymunk.
+- `WireLayout.py` owns layout policy; `WireGeometry.py`, `WireFrames.py`, `WireRoute.py` and `WirePathMath.py` are the shared core helpers.
+- `WireReducedDisplay.py` builds the reduced-bundle prisms and transitions; `WireBundle.py` applies visibility and display objects.
 - `WireBendHelpers.py` rebuilds sparse lace helpers from the solved bends; `VibeWire_RegenerateLaceHelpers` is the toolbar/context command.
 - `WireColors.py` holds the primary/tracer palette and quadrant logic.
 - `WirePacking.py` provides the optional pymunk-backed `Packed` harness layout and pymunk availability checks.
@@ -201,10 +216,17 @@ Bundle segment endpoints are point references defined in global coordinates or r
 
 ## References
 - `freecad/VibeWire/WireCreator.py` — bi-arc/path/sweep and sector profile implementation.
+- `freecad/VibeWire/WirePathMath.py` — shared arc, bi-arc and path primitives.
+- `freecad/VibeWire/WireGeometry.py` — shared 2D geometry and fitting helpers.
+- `freecad/VibeWire/WireFrames.py` — segment coordinate frames and orientation.
+- `freecad/VibeWire/WireRoute.py` — route graph, route parsing and layout codec.
+- `freecad/VibeWire/WireLayout.py` — layout policy and `LayoutResult`.
+- `freecad/VibeWire/WireReducedDisplay.py` — reduced-bundle display geometry.
+- `freecad/VibeWire/WireTypes.py` — shared object predicates and role constants.
 - `freecad/VibeWire/WireCable.py` — persistent cable object, validation, colors and helpers.
 - `freecad/VibeWire/WireTaskPanel.py` — bundle-segment wire route editor and geometry controls.
 - `freecad/VibeWire/VibeWireCmd.py` — toolbar and context-menu commands.
-- `freecad/VibeWire/WireBundle.py` — harness layout, route/helper groups, segment roles, segment objects and view providers.
+- `freecad/VibeWire/WireBundle.py` — harness/segment objects, layout application, route/helper groups and view providers.
 - `freecad/VibeWire/WireBendHelpers.py` — automatic sparse lace-helper generation and orientation interpolation.
 - `freecad/VibeWire/WireBundleTaskPanel.py` — harness segment/group/radius/gap/pattern/display-mode editor.
 - `freecad/VibeWire/WireTip.py` — per-end cable tip settings object and view provider.

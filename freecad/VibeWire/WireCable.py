@@ -16,16 +16,18 @@ from .WireColors import (
     parse_legacy,
     quadrants as cable_color_quadrants,
 )
-from .WireBundle import (
-    ancestor_groups,
+from .WireBundle import ancestor_groups
+from .WireFrames import segment_basis
+from .WireTypes import (
     is_bundle_segment,
     is_harness,
     is_lace_helper,
-    segment_basis,
     segment_is_open,
 )
 from . import WireTransitions
 from .WireCreator import Segment, WireCreator
+from .WirePathMath import biarc_edges
+from .WireRoute import decode_offset, layout_key
 from .WireTip import TIP_OFFSET_MARGIN, create_wire_tip
 
 ICON = os.path.join(os.path.dirname(__file__), "Resources", "Icons", "wire_icon.png")
@@ -352,7 +354,7 @@ class WireCableProxy:
                     transitions[index] = result["pieces"]
                 else:
                     if (next_start - prev_end).Length > 1e-9:
-                        arcs, _, _ = creator._biarc(
+                        arcs, _, _ = biarc_edges(
                             prev_end,
                             prev_direction,
                             next_start,
@@ -1077,24 +1079,11 @@ class WireCableProxy:
         try:
             if bundle_segment not in harness.Segments:
                 return App.Vector(0.0, 0.0, 0.0)
-            key = f"{bundle_segment.Name}|{cable.Name}"
-            raw = harness.Layout.get(key, "0,0,0")
-            parts = [
-                float(value)
-                for value in raw.replace(";", ",").split(",")
-                if value.strip()
-            ]
+            raw = harness.Layout.get(layout_key(bundle_segment, cable), "0,0,0")
         except Exception:
             return App.Vector(0.0, 0.0, 0.0)
-
-        if len(parts) >= 3:
-            return App.Vector(parts[0], parts[1], parts[2])
         side, normal = segment_basis(bundle_segment)
-        if len(parts) == 2:
-            return side * parts[0] + normal * parts[1]
-        if len(parts) == 1:
-            return side * parts[0]
-        return App.Vector(0.0, 0.0, 0.0)
+        return decode_offset(raw, side, normal)
 
     def _bundle_points(self, cable, bundle_segment):
         start_obj = bundle_segment.Start

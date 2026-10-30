@@ -6,6 +6,9 @@ from collections import namedtuple
 import FreeCAD as App
 import Part
 
+from .WireGeometry import unit_vector
+from .WirePathMath import biarc_edges
+
 V = App.Vector
 
 Segment = namedtuple("Segment", ["start", "end"])
@@ -27,9 +30,7 @@ class WireCreator:
 
     @staticmethod
     def _unit(vector):
-        if vector.Length < 1e-12:
-            raise ValueError("Cannot normalize a zero vector")
-        return V(vector).normalize()
+        return unit_vector(vector)
 
     @staticmethod
     def _bend_radius(edge):
@@ -51,79 +52,6 @@ class WireCreator:
             return None
         return 1.0 / max_curvature
 
-    def _arc_edge(self, start, end, start_tangent):
-        chord = end - start
-        chord_length = chord.Length
-        if chord_length < 1e-9:
-            return None
-
-        cross = chord.cross(start_tangent)
-        offset = cross.Length
-        if offset < 1e-9 * max(1.0, chord_length):
-            return Part.makeLine(start, end)
-
-        normal = self._unit(start_tangent.cross(cross))
-        radius = chord_length * chord_length / (2.0 * offset)
-        center = start + normal * radius
-
-        radial_start = start - center
-        radial_end = end - center
-        axis = self._unit(radial_start.cross(start_tangent))
-
-        angle = radial_start.getAngle(radial_end)
-        if radial_start.cross(radial_end).dot(axis) < 0.0:
-            angle = 2.0 * math.pi - angle
-
-        circle = Part.Circle(center, axis, radius)
-        circle.XAxis = self._unit(radial_start)
-        return Part.ArcOfCircle(circle, 0.0, angle).toShape()
-
-    def _biarc(self, start, start_tangent, end, end_tangent):
-        tangent_start = self._unit(start_tangent)
-        tangent_end = self._unit(end_tangent)
-
-        chord = end - start
-        tangent_sum = tangent_start + tangent_end
-
-        chord_length_sq = chord.dot(chord)
-        if chord_length_sq < 1e-18:
-            return [], start, tangent_start
-
-        dot_product = chord.dot(tangent_sum)
-        constant = tangent_sum.dot(tangent_sum) - 4.0
-        discriminant = max(
-            0.0,
-            4.0 * (dot_product * dot_product - chord_length_sq * constant),
-        )
-
-        inverse_joint_scale = (
-            2.0 * dot_product + math.sqrt(discriminant)
-        ) / (2.0 * chord_length_sq)
-        if abs(inverse_joint_scale) < 1e-18:
-            chord_len = math.sqrt(chord_length_sq)
-            arcs = [self._arc_edge(start, end, tangent_start)]
-            if arcs[0] is None:
-                arcs = [Part.makeLine(start, end)]
-            return [a for a in arcs if a is not None], start + tangent_start * chord_len * 0.5, tangent_start
-
-        try:
-            joint_tangent = self._unit(chord * inverse_joint_scale - tangent_sum)
-        except Exception:
-            chord_len = math.sqrt(chord_length_sq)
-            arcs = [self._arc_edge(start, end, tangent_start)]
-            if arcs[0] is None:
-                arcs = [Part.makeLine(start, end)]
-            return [a for a in arcs if a is not None], start + tangent_start * chord_len * 0.5, tangent_start
-
-        joint_scale = 1.0 / inverse_joint_scale
-        joint = start + (tangent_start + joint_tangent) * joint_scale
-
-        arcs = [
-            self._arc_edge(start, joint, tangent_start),
-            self._arc_edge(joint, end, joint_tangent),
-        ]
-        return [arc for arc in arcs if arc is not None], joint, joint_tangent
-
     def create_wire(self, segments):
         self.segments = segments
         self.pieces = []
@@ -141,7 +69,7 @@ class WireCreator:
                     chord_start = previous.end
                     chord_end = segment.start
                     chord_len = (chord_end - chord_start).Length
-                    arcs, joint, _ = self._biarc(
+                    arcs, joint, _ = biarc_edges(
                         chord_start,
                         previous_direction,
                         chord_end,

@@ -3,7 +3,7 @@
 import FreeCAD as App
 from PySide import QtCore, QtGui
 
-from .WireBundle import is_bundle_segment
+from .WireTypes import is_bundle_segment
 
 POINT_REFERENCE_TYPES = (
     "Part::LocalCoordinateSystem",

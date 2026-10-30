@@ -6,6 +6,13 @@ import sys
 
 import numpy as np
 
+from .WireGeometry import (
+    circle_samples,
+    circumscribed_points,
+    convex_hull_2d,
+    polygon_area_centroid,
+)
+
 _PYMUNK = None
 _PYMUNK_ERROR = None
 _CACHE = {}
@@ -264,22 +271,6 @@ def packed_positions(diameters, gap=0.0, initial_positions=None):
 SAMPLE_SEGMENTS = 72
 
 
-def _circle_samples(positions, radii):
-    angles = np.linspace(0.0, 2.0 * math.pi, SAMPLE_SEGMENTS, endpoint=False)
-    cosines = np.cos(angles)
-    sines = np.sin(angles)
-    points = []
-    for position, radius in zip(positions, radii):
-        for cosine, sine in zip(cosines, sines):
-            points.append(
-                (
-                    position[0] + radius * cosine,
-                    position[1] + radius * sine,
-                )
-            )
-    return points
-
-
 def _circumcircle(first, second, third):
     ax, ay = first
     bx, by = second
@@ -367,7 +358,7 @@ def _minimum_enclosing_circle(points):
 
 
 def _fit_circle(positions, radii):
-    points = _circle_samples(positions, radii)
+    points = circle_samples(positions, radii, SAMPLE_SEGMENTS)
     if not points:
         return (0.0, 0.0), 0.0
     return _minimum_enclosing_circle(points)
@@ -376,70 +367,6 @@ def _fit_circle(positions, radii):
 def fit_circle_for_positions(positions, diameters):
     radii = [float(diameter) / 2.0 for diameter in diameters]
     return _fit_circle(positions, radii)
-
-
-def _convex_hull_2d(points):
-    unique = sorted(
-        set((round(float(x), 9), round(float(y), 9)) for x, y in points)
-    )
-    if len(unique) <= 1:
-        return unique
-
-    def cross(origin, first, second):
-        return (
-            (first[0] - origin[0]) * (second[1] - origin[1])
-            - (first[1] - origin[1]) * (second[0] - origin[0])
-        )
-
-    lower = []
-    for point in unique:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0.0:
-            lower.pop()
-        lower.append(point)
-    upper = []
-    for point in reversed(unique):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0.0:
-            upper.pop()
-        upper.append(point)
-    hull = lower[:-1] + upper[:-1]
-    area = sum(
-        hull[index][0] * hull[(index + 1) % len(hull)][1]
-        - hull[(index + 1) % len(hull)][0] * hull[index][1]
-        for index in range(len(hull))
-    )
-    if area < 0.0:
-        hull.reverse()
-    return hull
-
-
-def _polygon_area_centroid(vertices):
-    count = len(vertices)
-    if count < 3:
-        if not vertices:
-            return 0.0, 0.0, 0.0
-        return (
-            sum(point[0] for point in vertices) / count,
-            sum(point[1] for point in vertices) / count,
-            0.0,
-        )
-    area2 = 0.0
-    cx = 0.0
-    cy = 0.0
-    for index in range(count):
-        x0, y0 = vertices[index]
-        x1, y1 = vertices[(index + 1) % count]
-        cross = x0 * y1 - x1 * y0
-        area2 += cross
-        cx += (x0 + x1) * cross
-        cy += (y0 + y1) * cross
-    area = area2 / 2.0
-    if abs(area) < 1e-12:
-        return (
-            sum(point[0] for point in vertices) / count,
-            sum(point[1] for point in vertices) / count,
-            0.0,
-        )
-    return cx / (6.0 * area), cy / (6.0 * area), abs(area)
 
 
 def bundle_hull(positions, diameters, samples=32):
@@ -459,7 +386,7 @@ def bundle_hull(positions, diameters, samples=32):
                     y + radius * math.sin(angle),
                 )
             )
-    hull = _convex_hull_2d(points)
+    hull = convex_hull_2d(points)
     if len(hull) < 3:
         cx = sum(point[0] for point in positions) / len(positions)
         cy = sum(point[1] for point in positions) / len(positions)
@@ -474,7 +401,7 @@ def bundle_hull(positions, diameters, samples=32):
             [(radius, 0.0), (0.0, radius), (-radius, 0.0), (0.0, -radius)],
             (cx, cy),
         )
-    cx, cy, _area = _polygon_area_centroid(hull)
+    cx, cy, _area = polygon_area_centroid(hull)
     return (
         [(point[0] - cx, point[1] - cy) for point in hull],
         (cx, cy),
@@ -491,17 +418,8 @@ def _shape_radius(shape):
 
 def _shape_polygon(shape, samples=32):
     if shape[0] == "circle":
-        radius = float(shape[1])
-        if radius <= 0.0:
-            radius = 1e-3
-        radius /= math.cos(math.pi / samples)
-        return [
-            (
-                radius * math.cos(2.0 * math.pi * index / samples),
-                radius * math.sin(2.0 * math.pi * index / samples),
-            )
-            for index in range(samples)
-        ]
+        radius = max(float(shape[1]), 1e-3)
+        return circumscribed_points(0.0, 0.0, 2.0 * radius, samples)
     return [(float(x), float(y)) for x, y in shape[1]]
 
 
@@ -528,8 +446,8 @@ def _polygon_overlap(first, second):
                 return None
             overlap = min(max_first, max_second) - max(min_first, min_second)
             if best is None or overlap < best[2]:
-                first_center = _polygon_area_centroid(first)[:2]
-                second_center = _polygon_area_centroid(second)[:2]
+                first_center = polygon_area_centroid(first)[:2]
+                second_center = polygon_area_centroid(second)[:2]
                 direction = (
                     (second_center[0] - first_center[0]) * axis[0]
                     + (second_center[1] - first_center[1]) * axis[1]
@@ -637,7 +555,7 @@ def _packed_shapes_uncached(shapes, initial_positions=None):
             physics_shape = pymunk.Circle(body, radius)
         else:
             vertices = [(float(x), float(y)) for x, y in shape[1]]
-            _cx, _cy, area = _polygon_area_centroid(vertices)
+            _cx, _cy, area = polygon_area_centroid(vertices)
             mass = max(area, 1e-6)
             moment = pymunk.moment_for_poly(mass, vertices)
             body = pymunk.Body(mass, moment)
@@ -729,7 +647,7 @@ def packed_shapes(shapes, initial_positions=None):
 
 def fit_radius_for_positions(positions, diameters):
     radii = [float(diameter) / 2.0 for diameter in diameters]
-    points = _circle_samples(positions, radii)
+    points = circle_samples(positions, radii, SAMPLE_SEGMENTS)
     if not points:
         return None
     _center, radius = _minimum_enclosing_circle(points)

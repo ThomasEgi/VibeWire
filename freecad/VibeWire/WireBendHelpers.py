@@ -1,22 +1,18 @@
 """Automatic lace-helper generation for harness bends."""
 
-import math
-
-import FreeCAD as App
 import Part
 
 from . import WireBundle
 from .WireCreator import Segment, WireCreator
+from .WireGeometry import unit_vector
+from .WireRoute import decode_offset, layout_key, parse_cable_route
 
 HELPER_LENGTH = 1.0
 MIN_BEND_RADIUS = 10.0
 
 
 def _unit(vector):
-    length = vector.Length
-    if length < 1e-9:
-        return None
-    return vector / length
+    return unit_vector(vector, zero="none")
 
 
 def _bundle_outer_radius(harness):
@@ -29,10 +25,11 @@ def _bundle_outer_radius(harness):
             max_cable_radius, max(0.0, cable.Diameter.Value) / 2.0
         )
         for segment in harness.Segments:
-            raw = harness.Layout.get("{}|{}".format(segment.Name, cable.Name))
+            raw = harness.Layout.get(layout_key(segment, cable))
             if not raw:
                 continue
-            offset = App.Vector(*[float(value) for value in raw.split(",")])
+            side, normal = WireBundle.segment_basis(segment)
+            offset = decode_offset(raw, side, normal)
             max_offset = max(max_offset, offset.Length)
     if max_offset > 1e-9:
         return max_offset + max_cable_radius
@@ -146,20 +143,9 @@ def rebuild_bend_helpers(
     ]
 
     cable_routes = {}
+    original_set = set(original)
     for cable in cables:
-        directions = list(getattr(cable, "SegmentDirections", []))
-        route = []
-        route_directions = []
-        for index, segment in enumerate(list(cable.Points)):
-            if WireBundle.is_lace_helper(segment):
-                continue
-            if segment not in original:
-                continue
-            route.append(segment)
-            route_directions.append(
-                directions[index] if index < len(directions) else 0
-            )
-        cable_routes[cable] = (route, route_directions)
+        cable_routes[cable] = parse_cable_route(cable, original_set)
 
     _remove_old_helpers(harness)
 
