@@ -1,4 +1,3 @@
-import csv
 import math
 import os
 
@@ -9,12 +8,15 @@ SNIPPET_DIR = (
     if "__file__" in globals()
     else "/home/mx/opencaudetest/WirePlugin-main/snippet_archive"
 )
-CSV_PATH = os.path.join(SNIPPET_DIR, "strapsizes.csv")
 DOC_PATH = os.path.join(os.path.dirname(SNIPPET_DIR), "BundleWrappingPoC.FCStd")
 DOC_NAME = "BundleWrappingPoC"
 
-with open(CSV_PATH, encoding="utf-8-sig", newline="") as handle:
-    row = next(csv.DictReader(handle))
+row = {
+    "width": "2.5",
+    "length": "100",
+    "thickness": "1.0",
+    "Max. bundle diameter [mm]": "20",
+}
 
 width = float(row["width"])
 length = float(row["length"])
@@ -28,7 +30,7 @@ hole_length = thickness + 0.8
 head_clearance = 0.1
 head_start_y = -1.7673787374119105
 
-print("CSV row:", row)
+print("Strap row:", row)
 print(
     "Strap: width %.3f mm, length %.3f mm, thickness %.3f mm, max bundle Ø %.3f mm"
     % (width, length, thickness, max_bundle_diameter)

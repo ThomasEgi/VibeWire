@@ -18,58 +18,6 @@ def _signed_area(points):
     return area / 2.0
 
 
-def _line_intersection(a1, a2, b1, b2):
-    da = a2 - a1
-    db = b2 - b1
-    denominator = da.x * db.y - da.y * db.x
-    if abs(denominator) < 1e-12:
-        raise ValueError("parallel offset edges")
-    factor = ((b1.x - a1.x) * db.y - (b1.y - a1.y) * db.x) / denominator
-    return App.Vector(a1.x + da.x * factor, a1.y + da.y * factor, 0.0)
-
-
-def offset_convex_polygon(points, distance):
-    points = [_vector(point) for point in points]
-    if _signed_area(points) < 0.0:
-        points.reverse()
-    lines = []
-    for index, start in enumerate(points):
-        end = points[(index + 1) % len(points)]
-        edge = end - start
-        length = edge.Length
-        if length < 1e-12:
-            continue
-        normal = App.Vector(edge.y / length, -edge.x / length, 0.0)
-        lines.append((start + normal * distance, end + normal * distance))
-    if len(lines) != len(points):
-        raise ValueError("degenerate hull edge")
-    result = []
-    for index in range(len(points)):
-        previous = lines[index - 1]
-        current = lines[index]
-        result.append(
-            _line_intersection(
-                previous[0],
-                previous[1],
-                current[0],
-                current[1],
-            )
-        )
-    return result
-
-
-def _closed_wire(points):
-    return Part.makePolygon(list(points) + [points[0]])
-
-
-def _point_line_distance(point, first, second):
-    edge = second - first
-    length = edge.Length
-    if length < 1e-12:
-        return (point - first).Length
-    return abs((point - first).cross(edge).Length) / length
-
-
 def _convex_hull_2d(points):
     unique = sorted(set((round(float(point.x), 9), round(float(point.y), 9)) for point in points))
     if len(unique) <= 1:
@@ -105,47 +53,49 @@ def _convex_hull_2d(points):
     return result
 
 
-def _simplify_hull(points, tolerance, min_vertices=12):
-    if tolerance <= 0.0:
-        return points
-    result = list(points)
-    minimum = max(3, min_vertices)
-    while len(result) > minimum:
-        kept = []
-        removed = False
-        count = len(result)
-        for index in range(count):
-            previous = result[index - 1]
-            current = result[index]
-            following = result[(index + 1) % count]
-            if (
-                _point_line_distance(current, previous, following)
-                <= tolerance
-            ):
-                removed = True
-                continue
-            kept.append(current)
-        if not removed:
-            break
-        if len(kept) >= minimum:
-            result = kept
-            continue
-        reduced = result[::2]
-        if len(reduced) < minimum:
-            break
-        result = reduced
-    return result
-
-
 def _make_head_local(spec):
     head_y = -spec.head_length / 2.0 - spec.hole_length / 2.0
     head_z = -spec.head_width / 2.0
-    head_box = Part.makeBox(
-        spec.head_height,
-        spec.head_length,
-        spec.head_width,
-        App.Vector(-spec.head_height / 2.0, head_y, head_z),
+    inner_x = -spec.head_height / 2.0
+    outer_x = spec.head_height / 2.0
+    draft = spec.head_height * math.tan(math.radians(spec.draft_angle))
+    draft = min(draft, spec.head_length / 2.0 - 1e-6)
+    draft = min(draft, spec.head_width / 2.0 - 1e-6)
+    inner_wire = Part.makePolygon(
+        [
+            App.Vector(inner_x, head_y, head_z),
+            App.Vector(inner_x, head_y + spec.head_length, head_z),
+            App.Vector(
+                inner_x,
+                head_y + spec.head_length,
+                head_z + spec.head_width,
+            ),
+            App.Vector(inner_x, head_y, head_z + spec.head_width),
+            App.Vector(inner_x, head_y, head_z),
+        ]
     )
+    outer_wire = Part.makePolygon(
+        [
+            App.Vector(outer_x, head_y + draft, head_z + draft),
+            App.Vector(
+                outer_x,
+                head_y + spec.head_length - draft,
+                head_z + draft,
+            ),
+            App.Vector(
+                outer_x,
+                head_y + spec.head_length - draft,
+                head_z + spec.head_width - draft,
+            ),
+            App.Vector(
+                outer_x,
+                head_y + draft,
+                head_z + spec.head_width - draft,
+            ),
+            App.Vector(outer_x, head_y + draft, head_z + draft),
+        ]
+    )
+    head_box = Part.makeLoft([inner_wire, outer_wire], True, True, False)
     hole_box = Part.makeBox(
         spec.head_height + 2.0 * spec.head_clearance,
         spec.hole_length,
@@ -156,7 +106,93 @@ def _make_head_local(spec):
             -spec.hole_width / 2.0,
         ),
     )
-    return head_box.cut(hole_box)
+    head = head_box.cut(hole_box)
+    if spec.head_chamfer > 0.0 and spec.head_chamfer_edges:
+        edges = [
+            head.Edges[index - 1]
+            for index in spec.head_chamfer_edges
+            if index <= len(head.Edges)
+        ]
+        if edges:
+            head = head.makeChamfer(spec.head_chamfer, edges)
+    return head
+
+
+STRAP_TABLE = [
+    (2.5, 100.0, 1.0, 20.0),
+    (2.5, 150.0, 1.0, 36.0),
+    (2.5, 200.0, 1.0, 59.0),
+    (2.5, 250.0, 1.0, 68.0),
+    (3.6, 150.0, 1.2, 36.0),
+    (3.6, 200.0, 1.2, 52.0),
+    (3.6, 250.0, 1.2, 68.0),
+    (3.6, 300.0, 1.2, 84.0),
+    (3.6, 350.0, 1.2, 99.0),
+    (3.6, 400.0, 1.2, 113.0),
+    (4.8, 200.0, 1.4, 49.0),
+    (4.8, 250.0, 1.4, 65.0),
+    (4.8, 300.0, 1.4, 81.0),
+    (4.8, 350.0, 1.4, 97.0),
+    (4.8, 400.0, 1.4, 113.0),
+    (4.8, 500.0, 1.4, 145.0),
+    (4.8, 600.0, 1.4, 179.0),
+    (4.8, 750.0, 1.4, 216.0),
+    (7.6, 200.0, 1.6, 55.0),
+    (7.6, 250.0, 1.6, 70.0),
+    (7.6, 300.0, 1.6, 80.0),
+    (7.6, 400.0, 1.6, 110.0),
+    (7.6, 500.0, 1.6, 145.0),
+    (7.6, 600.0, 1.6, 180.0),
+    (7.6, 750.0, 1.6, 230.0),
+    (12.4, 200.0, 2.0, 57.0),
+    (12.4, 300.0, 2.0, 76.0),
+    (12.4, 400.0, 2.0, 108.0),
+    (12.4, 500.0, 2.0, 156.0),
+    (12.4, 600.0, 2.0, 195.0),
+    (12.4, 750.0, 2.0, 216.0),
+    (12.4, 1000.0, 2.0, 305.0),
+]
+
+
+def polygon_perimeter(points):
+    if len(points) < 2:
+        return 0.0
+    return sum(
+        (points[(index + 1) % len(points)] - points[index]).Length
+        for index in range(len(points))
+    )
+
+
+def select_strap_spec(circumference, table=None):
+    table = STRAP_TABLE if table is None else table
+    equivalent_diameter = circumference / math.pi
+    rows_by_width = {}
+    for row in table:
+        rows_by_width.setdefault(float(row[0]), []).append(row)
+    fitting_widths = [
+        width
+        for width, rows in rows_by_width.items()
+        if max(row[3] for row in rows) >= equivalent_diameter
+    ]
+    if not fitting_widths:
+        raise ValueError(
+            "no strap size fits bundle diameter %.3f mm"
+            % equivalent_diameter
+        )
+    width = min(fitting_widths)
+    fitting_rows = [
+        row
+        for row in rows_by_width[width]
+        if row[3] >= equivalent_diameter
+    ]
+    row = min(fitting_rows, key=lambda item: item[3])
+    spec = StrapSpec(
+        width=row[0],
+        length=row[1],
+        thickness=row[2],
+        max_bundle_diameter=row[3],
+    )
+    return spec, row, equivalent_diameter
 
 
 class StrapSpec:
@@ -169,6 +205,9 @@ class StrapSpec:
         hole_clearance=0.8,
         head_clearance=0.1,
         end_lift_factor=1.5,
+        draft_angle=8.0,
+        head_chamfer=0.2,
+        head_chamfer_edges=(2, 4, 12, 20, 3, 13, 14, 15),
     ):
         self.width = float(width)
         self.length = float(length)
@@ -176,7 +215,10 @@ class StrapSpec:
         self.max_bundle_diameter = max_bundle_diameter
         self.head_clearance = float(head_clearance)
         self.end_lift_factor = float(end_lift_factor)
-        self.head_width = self.width + 2.0 * self.thickness
+        self.draft_angle = float(draft_angle)
+        self.head_chamfer = float(head_chamfer)
+        self.head_chamfer_edges = tuple(head_chamfer_edges)
+        self.head_width = self.width + 4.0 * self.thickness
         self.head_height = self.width
         self.head_length = self.head_width
         self.hole_width = self.width + float(hole_clearance)
@@ -192,10 +234,9 @@ class StrapBuilder:
         spec,
         head_index=None,
         lift_factor=None,
-        simplify_tolerance=0.2,
     ):
         self.spec = spec
-        self.hull = self._prepare_hull(hull, simplify_tolerance)
+        self.hull = self._prepare_hull(hull)
         self.head_index = self._default_head_index() if head_index is None else head_index
         self.head_index %= len(self.hull)
         self.lift_factor = (
@@ -211,36 +252,57 @@ class StrapBuilder:
         self.hole_inner = self.head_placement - radial * (self.spec.head_height / 2.0)
         self.hole_top = self.head_placement + radial * (self.spec.head_height / 2.0)
         tangential = self.head_rotation.multVec(App.Vector(0.0, 1.0, 0.0))
-        self.bend_point = (
+        base_offset = max(
+            self.head_lift,
+            self.spec.head_height / 2.0 + 0.1,
+        )
+        base_candidate = (
             self.head_placement
-            - radial * self.head_lift
+            - radial * base_offset
             - tangential * (self.spec.thickness / 2.0)
         )
-        self.strap_hull = _convex_hull_2d(self.hull + [self.bend_point])
-        self.strap_head_index = self._nearest_index(
-            self.strap_hull, self.head_start
+        lower_candidate = (
+            self.head_placement
+            - radial * (base_offset + self.spec.thickness / 2.0)
+            - tangential * (self.spec.thickness / 2.0)
         )
-        self.bend_index = min(
-            (
-                index
-                for index in range(len(self.strap_hull))
-                if index != self.strap_head_index
-            ),
-            key=lambda index: (self.strap_hull[index] - self.bend_point).Length,
+        candidates = [lower_candidate]
+        if (base_candidate - lower_candidate).Length > 1e-9:
+            candidates.append(base_candidate)
+        for candidate in candidates:
+            self.bend_point = candidate
+            self.strap_hull = _convex_hull_2d(self.hull + [self.bend_point])
+            self.strap_head_index = self._nearest_index(
+                self.strap_hull, self.head_start
+            )
+            self.bend_index = self._nearest_index(
+                self.strap_hull, self.bend_point
+            )
+            self.offset_hull = offset_convex_polygon(
+                self.strap_hull, self.spec.thickness / 2.0
+            )
+            self.strap_start_center = (
+                self.head_start
+                + self.head_normal * (self.spec.thickness / 2.0)
+            )
+            self.wrap_path = self._wrap_path()
+            self.strap_shape = self._make_strap()
+            if (
+                self.strap_shape.isValid()
+                and self.strap_shape.Solids
+                and self.strap_shape.Volume > 0.0
+            ):
+                break
+        else:
+            raise RuntimeError("strap build failed for both bend points")
+        self.strap_path_length = sum(
+            (self.wrap_path[index + 1] - self.wrap_path[index]).Length
+            for index in range(len(self.wrap_path) - 1)
         )
-        self.offset_hull = offset_convex_polygon(
-            self.strap_hull, self.spec.thickness / 2.0
-        )
-        self.strap_start_center = (
-            self.head_start
-            + self.head_normal * (self.spec.thickness / 2.0)
-        )
-        self.wrap_path = self._wrap_path()
-        self.strap_shape = self._make_strap()
         self.head_shape = _make_head_local(self.spec)
 
     @staticmethod
-    def _prepare_hull(hull, simplify_tolerance):
+    def _prepare_hull(hull):
         points = []
         for point in hull:
             vector = _vector(point)
@@ -252,7 +314,7 @@ class StrapBuilder:
             raise ValueError("hull needs at least three points")
         if _signed_area(points) < 0.0:
             points.reverse()
-        return _simplify_hull(points, simplify_tolerance)
+        return points
 
     def _default_head_index(self):
         return max(range(len(self.hull)), key=lambda index: self.hull[index].x)
@@ -322,22 +384,62 @@ class StrapBuilder:
         placement = self.head_start - rotation.multVec(local_start)
         return rotation, placement
 
+    @staticmethod
+    def _closest_on_polygon(point, polygon):
+        best = None
+        for index, first in enumerate(polygon):
+            second = polygon[(index + 1) % len(polygon)]
+            edge = second - first
+            length2 = edge.Length**2
+            if length2 < 1e-12:
+                continue
+            parameter = max(
+                0.0,
+                min(1.0, (point - first).dot(edge) / length2),
+            )
+            closest = first + edge * parameter
+            distance = (point - closest).Length
+            if best is None or distance < best[0]:
+                best = (distance, index, parameter, closest)
+        if best is None:
+            raise ValueError("cannot project point onto polygon")
+        return best[1], best[2], best[3]
+
     def _wrap_path(self):
         count = len(self.offset_hull)
-        forward = []
-        index = self.strap_head_index
-        while True:
-            forward.append(self.offset_hull[index])
-            if index == self.bend_index:
-                break
-            index = (index + 1) % count
-        backward = []
-        index = self.strap_head_index
-        while True:
-            backward.append(self.offset_hull[index])
-            if index == self.bend_index:
-                break
-            index = (index - 1) % count
+        edge_index, parameter, projected = self._closest_on_polygon(
+            self.strap_start_center,
+            self.offset_hull,
+        )
+
+        def sequence_forward(edge, parameter):
+            points = [projected]
+            if parameter < 1.0 - 1e-9:
+                index = (edge + 1) % count
+            else:
+                index = (edge + 2) % count
+            while True:
+                points.append(self.offset_hull[index])
+                if index == self.bend_index:
+                    break
+                index = (index + 1) % count
+            return points
+
+        def sequence_backward(edge, parameter):
+            points = [projected]
+            if parameter > 1e-9:
+                index = edge
+            else:
+                index = (edge - 1) % count
+            while True:
+                points.append(self.offset_hull[index])
+                if index == self.bend_index:
+                    break
+                index = (index - 1) % count
+            return points
+
+        forward = sequence_forward(edge_index, parameter)
+        backward = sequence_backward(edge_index, parameter)
 
         def length(points):
             return sum(
@@ -347,8 +449,7 @@ class StrapBuilder:
 
         path = forward if length(forward) >= length(backward) else backward
         result = [self.strap_start_center]
-        if len(path) > 1:
-            result.extend(path[1:])
+        result.extend(path[1:])
         result.append(self.hole_top)
         return result
 
