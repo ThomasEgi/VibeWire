@@ -596,8 +596,20 @@ class ViewProviderWireBundle:
     def getIcon(self):
         return ICON
 
+    @staticmethod
+    def _ensure_object_proxy(vobj):
+        obj = getattr(vobj, "Object", None)
+        if obj is None:
+            return
+        if getattr(obj, "Proxy", None) is None:
+            try:
+                WireHarnessProxy(obj)
+            except Exception:
+                pass
+
     def attach(self, vobj):
         self.Object = vobj.Object
+        self._ensure_object_proxy(vobj)
         self._setup_display_mode(vobj)
         self._sync_visibility_mode(vobj)
         try:
@@ -707,6 +719,7 @@ class ViewProviderWireBundle:
             return False
         from .WireBundleTaskPanel import WireBundleTaskPanel
 
+        self._ensure_object_proxy(vobj)
         harness = vobj.Object
         selected_segment = None
         for selected in Gui.Selection.getSelection():

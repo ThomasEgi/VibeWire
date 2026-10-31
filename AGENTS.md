@@ -113,9 +113,10 @@ exec(open("/home/mx/opencaudetest/wireplugin/poc_biarc_sweep.py").read())
 - Auto-generated construction helpers are hidden by default: the `Lace Helpers` group and its individual helper segments/nodes, `Bundle Hulls`/`Overall Hull` overlays, `Wire Path` and `Bad Bends` helpers. While the helper group is hidden, `ensure_helper_group` also forces its children hidden; newly created lace helpers and helper nodes start hidden. `Cable Circles` is the exception: it is shown in Reduced Bundle as the simplified cable-layout view. Core/ferrule helpers follow their tip visibility.
 - New segments default to visible, dark grey (`0.33, 0.33, 0.36`) at 65% transparency. The selected segment’s display radius is live-editable; Add Segment copies the active/default radius.
 - Route segments are placed in the `SegmentGroup`; lace helpers and their point nodes are placed in the separate `HelperGroup` (`Lace Helpers`). The harness claims both groups in the tree, so each eye toggles its own contents.
-- The harness view provider has an empty Coin display mode and `DefaultMode=0` so its eye/claimed children are showable.
+- The harness view provider has an empty Coin display mode and `DefaultMode=0` so its eye/claimed children are showable. `ViewProviderWireBundle.attach()` and `setEdit()` recreate `WireHarnessProxy` when a restored document has `Proxy=None`, so commands that locate the harness through the segment `InList` still work.
 - Bundle segments occasionally receive a Part view provider with `Proxy=None` and no Coin display modes; `execute()` initializes it with `ViewObject.Proxy=1`, makes it visible, and signals the tree icon.
 - Use `App::PropertyLinkGlobal` for segment start/end references; normal `PropertyLink` triggers scope warnings inside `App::Part`.
+- Custom Python proxy classes must be saved with canonical `freecad.VibeWire.*` module paths. Saving a document with top-level `VibeWire.*` proxies triggers FreeCAD restore blocking; repair the FCStd `Document.xml` module attributes if this happens.
 - `Segment.execute()` builds a pickable cylinder from the current point placements.
 - Bundle segments are independent: no bundle-level bi-arcs or segment-to-segment links.
 - Do not link a segment back to its harness; the harness links segments and the view provider claims the segment group.
