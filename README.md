@@ -1,36 +1,31 @@
 > **TL;DR:** A mostly vibe coded FreeCAD workbench for routing cables along reusable segments, insulation colors, and configurable cable tips. **Very much work in progress! Looking for feedback**
 
+
+
 # VibeWire for FreeCAD
 
-VibeWire is a FreeCAD workbench for modeling cable harnesses by routing wires along reusable straight bundle segments. Cables are built from ordered segment runs with per-segment direction, harness lane offsets, and configurable cable ends.
+VibeWire is a FreeCAD workbench for modeling cable harnesses by routing wires along straight bundle segments. Cables are built from ordered segment runs with per-segment directions. Currently a playground for features. Expect breaking changes. It's a living concept of what I personally want a wiring-harness tool to look like. So one day it can be matured into a production grade tool. If you need something less experimental i recommend to check out the [Cables Workbench](https://wiki.freecad.org/Cables_Workbench)
+
+![Cable/wire bundles with plastic straps](screenshots/straps.png)
+![Different wire tips](screenshots/tips.png)
+![Wire bundle packed using physics simulation](screenshots/pack.png)
 
 ## Concept
 
-Bundle segments define the physical path framework. A cable is an ordered list of bundle segments, with each segment running either normal or reversed. A harness groups segments and calculates how member cables are arranged along them. Each cable end is configured independently with a tip for length offsets, stripped wire, or ferrules.
+Bundle segments (or just segments) define the physical path framework. A cable is an ordered list of bundle segments, with each segment running either normal or reversed. A harness groups segments and calculates how member cables are arranged along them. Each cable end is configured independently with a tip for length offsets, stripped wire, or ferrules.
 
 ## Features
 
-- Persistent cable objects with editable routes and live tool updates
-- Bundle-segment-only cable routes with per-segment Normal/Reversed direction
-- One bundle-segment picker per route row and a Reverse Segment control
-- Hard per-segment `MaxCables` limit, with optional endpoint limits
-- Harness lane layouts using circular or linear patterns with configurable gap
-- Per-segment display radius, rotation, visibility group, and endpoint transforms
-- Wire-size selection driven by the bundled DIN 46228 T4 ferrule library
-- Custom diameter and core-size input
-- Cable color selection with independent primary and tracer colors
-- Multi-color cable cross-sections using four quadrants
-- Protective-earth shortcut: Green primary with Yellow tracer
-- Tip types for length offset, stripped wire, and ferrules
-- Ferrule type, variant, sleeve color code, and tip-length validation
-- Automatic shortest-conforming ferrule selection
-- Cable length, cable-only length, minimum bend radius, and bend warnings
-- Preview mode for incomplete routes
-- Two-way selection synchronization between editors and the 3D view
-- Contextual Tasks-panel tools for cables, tips, harnesses, and bundle segments
-- Hover previews for cables, tips, path segments, and bundle endpoints
-- Tip visibility and transparency controls for helper geometry
-- Persistent document state across save and reload
+- "high level" routing using segment based approach, wires will follow automaitcally
+- Per-harness settings such as arrangement type for cables in a segment ( linear, circular, packed, packed bundles)
+- Per-cable/wire settings such as common wire sizes (or custom cable diameter), cable color (with tracer-color support), minimum bending radius ( auto-feature on the todo)
+- Per-tip settings such as stripped wire, offset (for connectors on cables), and ferrules ( with automatic ferrule selection for the wire, including correct colors depending on your color-code choice)
+- Calculates cable length and stores it in the cable object (for BOM / production exports)
+- Contextual Task-panel with on-hover highlights of what you are about to edit
+- Many settigs feature live-updates in the 3d view, not all tho.
+- Physics-engine based cable-packing in a bundle (you read that right, it does take a moment tho). Giving you the circumfence of your bundle and the diameter of the smallest hole it will definetly fit through (unless your packing is worse than the simulation)
+- Automatic strap generation (zip ties), with per segment color choice including neon colors (saved as strap property for BOM export), also width and required length and equivalent bundle diameter are saved for bom/procurement.
+- Visually pleasing, and about 95% accurate. The approximation yields good result and is reasonably robust. Minor self-intersection exists but real wires should be able to handle it.
 
 ## History
 
