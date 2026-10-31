@@ -1,11 +1,13 @@
 """Reusable plastic-strap geometry for harness wrapping."""
 
+import colorsys
 import hashlib
 import math
 
 import FreeCAD as App
 import Part
 
+from . import FerruleData
 from .WireFrames import segment_basis
 
 
@@ -716,6 +718,24 @@ class WireStrapProxy:
                 "Strap",
                 "Larger segment joined by this strap run",
             )
+        wrap_colors = FerruleData.color_names() or ["black"]
+        if "WrapColor" not in properties:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "WrapColor",
+                "Strap",
+                "Color of this wrapping strap",
+            )
+            obj.WrapColor = wrap_colors
+            obj.WrapColor = (
+                "black" if "black" in wrap_colors else wrap_colors[0]
+            )
+        else:
+            current_wrap = getattr(obj, "WrapColor", "black")
+            obj.WrapColor = wrap_colors
+            obj.WrapColor = (
+                current_wrap if current_wrap in wrap_colors else "black"
+            )
         if "StrapSignature" not in properties:
             obj.addProperty(
                 "App::PropertyString",
@@ -761,6 +781,71 @@ class WireStrapProxy:
         obj.StrapPathLength = builder.strap_path_length
         obj.UtilizedStrapLength = utilized_length
         obj.StrapSignature = signature
+
+    @staticmethod
+    def _apply_color(obj):
+        if not App.GuiUp:
+            return
+        name = getattr(obj, "WrapColor", "black")
+        neon = FerruleData.is_neon_color(name)
+        base_name = FerruleData.base_color_name(name)
+        info = FerruleData.color_by_name(base_name)
+        rgb = (
+            FerruleData.hex_to_rgb(info.get("hex")) if info else None
+        )
+        if rgb is not None:
+            hue, saturation, _value = colorsys.rgb_to_hsv(*rgb)
+            if base_name == "orange":
+                hue = 20.0 / 360.0
+            if neon:
+                rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+            elif base_name in (
+                "pink",
+                "yellow",
+                "orange",
+                "green",
+                "blue",
+            ):
+                rgb = colorsys.hsv_to_rgb(hue, saturation, 0.8)
+        rgb = rgb or (0.0, 0.0, 0.0)
+        try:
+            view = obj.ViewObject
+            if neon:
+                material = App.Material()
+                material.DiffuseColor = (0.0, 0.0, 0.0, 1.0)
+                material.AmbientColor = (0.0, 0.0, 0.0, 1.0)
+                material.SpecularColor = (0.0, 0.0, 0.0, 1.0)
+                material.EmissiveColor = (
+                    rgb[0],
+                    rgb[1],
+                    rgb[2],
+                    1.0,
+                )
+                material.Transparency = 0
+                face_count = len(getattr(obj.Shape, "Faces", []) or [])
+                if face_count:
+                    view.ShapeAppearance = [material] * face_count
+                view.ShapeColor = (0.0, 0.0, 0.0)
+            else:
+                material = App.Material()
+                material.DiffuseColor = (rgb[0], rgb[1], rgb[2], 1.0)
+                material.AmbientColor = (0.3333, 0.3333, 0.3333, 1.0)
+                material.SpecularColor = (0.5333, 0.5333, 0.5333, 1.0)
+                material.EmissiveColor = (0.0, 0.0, 0.0, 1.0)
+                material.Transparency = 0
+                face_count = len(getattr(obj.Shape, "Faces", []) or [])
+                if face_count:
+                    view.ShapeAppearance = [material] * face_count
+                else:
+                    view.ShapeAppearance = []
+                view.ShapeColor = rgb
+            view.LineColor = tuple(component * 0.55 for component in rgb)
+        except Exception:
+            pass
+
+    def onChanged(self, obj, prop):
+        if prop == "WrapColor":
+            self._apply_color(obj)
 
     def dumps(self):
         return self.Type

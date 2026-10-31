@@ -7,7 +7,7 @@ import FreeCADGui as Gui
 import Part
 
 from .WireFrames import segment_basis
-from . import WireLayout, WireReducedDisplay, WireStrap, WireStrapLayout
+from . import FerruleData, WireLayout, WireReducedDisplay, WireStrap, WireStrapLayout
 from .WireGeometry import circles_hull
 from .WireRoute import (
     build_route_graph,
@@ -502,6 +502,8 @@ class WireHarnessProxy:
             strap.StrapKind = placement.kind
             strap.JoinSegment = placement.join_segment
             strap.Placement = placement.placement
+            strap.WrapColor = getattr(placement.segment, "WrapColor", "black")
+            WireStrap.WireStrapProxy._apply_color(strap)
             try:
                 strap.Proxy.execute(strap)
             except Exception:
@@ -813,6 +815,25 @@ class ViewProviderWireBundle:
 ViewProviderWireHarness = ViewProviderWireBundle
 
 
+def update_strap_colors_for_segment(segment):
+    """Push a segment wrap color onto its existing straps without rebuilding."""
+    color = getattr(segment, "WrapColor", "black")
+    for parent in getattr(segment, "InList", []):
+        if getattr(getattr(parent, "Proxy", None), "Type", None) != "WireHarness":
+            continue
+        group = getattr(parent, "StrapGroup", None)
+        if group is None or not group.isValid():
+            continue
+        for strap in group.Group:
+            if getattr(strap, "Segment", None) is not segment:
+                continue
+            try:
+                WireStrap.WireStrapProxy._add_properties(strap)
+                strap.WrapColor = color
+            except Exception:
+                pass
+
+
 class WireBundleSegmentProxy:
     """Straight bundle segment displayed as a pickable cylinder."""
 
@@ -868,6 +889,22 @@ class WireBundleSegmentProxy:
             )
             obj.SegmentRole = [ROUTE_SEGMENT_ROLE, LACE_HELPER_ROLE]
             obj.SegmentRole = role
+        wrap_colors = FerruleData.color_names() or ["black"]
+        if "WrapColor" not in obj.PropertiesList:
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "WrapColor",
+                "Segment",
+                "Color of the wrapping straps generated for this segment",
+            )
+            obj.WrapColor = wrap_colors
+            obj.WrapColor = "black" if "black" in wrap_colors else wrap_colors[0]
+        else:
+            current_wrap = getattr(obj, "WrapColor", "black")
+            obj.WrapColor = wrap_colors
+            obj.WrapColor = (
+                current_wrap if current_wrap in wrap_colors else "black"
+            )
         if "Dependencies" not in obj.PropertiesList:
             obj.addProperty(
                 "App::PropertyLinkListGlobal",
@@ -918,7 +955,10 @@ class WireBundleSegmentProxy:
                 pass
 
     def onChanged(self, obj, prop):
-        if prop not in ("MaxCables", "SegmentType"):
+        if prop not in ("MaxCables", "SegmentType", "WrapColor"):
+            return
+        if prop == "WrapColor":
+            update_strap_colors_for_segment(obj)
             return
         for parent in obj.InList:
             if getattr(getattr(parent, "Proxy", None), "Type", None) in (
@@ -1172,8 +1212,6 @@ def ensure_strap_objects(harness):
             needs_init = True
             if App.GuiUp:
                 try:
-                    strap.ViewObject.ShapeColor = (0.08, 0.28, 0.62)
-                    strap.ViewObject.LineColor = (0.03, 0.12, 0.35)
                     strap.ViewObject.Transparency = 0
                 except Exception:
                     pass
@@ -1190,6 +1228,8 @@ def ensure_strap_objects(harness):
             placement.slot,
         )
         _init_strap_view(strap, needs_init)
+        strap.WrapColor = getattr(placement.segment, "WrapColor", "black")
+        WireStrap.WireStrapProxy._apply_color(strap)
         try:
             strap.Proxy.execute(strap)
         except Exception:

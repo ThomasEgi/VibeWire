@@ -10,6 +10,13 @@ _DATA_PATH = (
     / "ferrules_DIN46228_T4.json"
 )
 _LIBRARY = None
+NEON_COLOR_BASES = {
+    "neon-pink": "pink",
+    "neon-yellow": "yellow",
+    "neon-orange": "orange",
+    "neon-green": "green",
+    "neon-blue": "blue",
+}
 
 
 def library():
@@ -101,6 +108,32 @@ def color_palette():
 
 def color_info(code):
     return color_palette().get(code)
+
+
+def color_names():
+    """Return the ferrule palette names, including neon variants."""
+    names = {
+        info["name"]
+        for info in color_palette().values()
+        if info.get("name")
+    }
+    names.update(NEON_COLOR_BASES)
+    return sorted(names)
+
+
+def is_neon_color(name):
+    return name in NEON_COLOR_BASES
+
+
+def base_color_name(name):
+    return NEON_COLOR_BASES.get(name, name)
+
+
+def color_by_name(name):
+    for info in color_palette().values():
+        if info.get("name") == name:
+            return info
+    return None
 
 
 def color_code(entry, system):

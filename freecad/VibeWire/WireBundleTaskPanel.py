@@ -4,6 +4,7 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 
+from . import FerruleData
 from .PointReference import (
     POINT_REFERENCE_TYPES,
     ClickableLabel,
@@ -11,12 +12,14 @@ from .PointReference import (
     PointReferenceGate,
 )
 from .WireBundle import (
+    WireBundleSegmentProxy,
     create_bundle_segment,
     create_wire_harness,
     ensure_strap_objects,
     is_lace_helper,
     remove_bundle_segment,
     update_segment_dependencies,
+    update_strap_colors_for_segment,
 )
 from .WirePacking import physics_available, unavailable_message
 
@@ -93,6 +96,13 @@ class WireBundleTaskPanel:
         self.radius_spin.setValue(10.0)
         self.radius_spin.setSuffix(" mm")
         detail_layout.addRow("Display radius:", self.radius_spin)
+        self.wrap_color_combo = QtGui.QComboBox()
+        self.wrap_color_combo.addItems(FerruleData.color_names() or ["black"])
+        self.wrap_color_combo.setCurrentText("black")
+        self.wrap_color_combo.setToolTip(
+            "Color of the wrapping straps generated for this segment"
+        )
+        detail_layout.addRow("Wrap color:", self.wrap_color_combo)
         layout.addWidget(detail_group)
 
         radius_form = QtGui.QFormLayout()
@@ -149,6 +159,9 @@ class WireBundleTaskPanel:
         self.orientation_spin.valueChanged.connect(self._on_orientation_changed)
         self.max_cables_spin.valueChanged.connect(self._on_max_cables_changed)
         self.radius_spin.valueChanged.connect(self._on_radius_changed)
+        self.wrap_color_combo.currentTextChanged.connect(
+            self._on_wrap_color_changed
+        )
         self.segment_list.currentRowChanged.connect(self._update_detail)
         self.form.destroyed.connect(self._on_form_destroyed)
 
@@ -220,6 +233,7 @@ class WireBundleTaskPanel:
                     "max_cables": int(getattr(segment, "MaxCables", 0) or 0),
                     "radius": segment.Radius.Value,
                     "segment_type": getattr(segment, "SegmentType", "Closed"),
+                    "wrap_color": getattr(segment, "WrapColor", "black"),
                 }
             )
         if "Gap" in self.bundle.PropertiesList:
@@ -271,6 +285,7 @@ class WireBundleTaskPanel:
                 "max_cables": 0,
                 "radius": self.radius_spin.value(),
                 "segment_type": "Closed",
+                "wrap_color": "black",
             }
         )
         self._update_list()
@@ -484,6 +499,7 @@ class WireBundleTaskPanel:
         self.orientation_spin.setEnabled(has_segment)
         self.max_cables_spin.setEnabled(has_segment)
         self.radius_spin.setEnabled(has_segment)
+        self.wrap_color_combo.setEnabled(has_segment)
         self.segment_type_combo.setEnabled(has_segment)
 
         if not has_segment:
@@ -498,6 +514,9 @@ class WireBundleTaskPanel:
             self.segment_type_combo.blockSignals(True)
             self.segment_type_combo.setCurrentText("Closed")
             self.segment_type_combo.blockSignals(False)
+            self.wrap_color_combo.blockSignals(True)
+            self.wrap_color_combo.setCurrentText("black")
+            self.wrap_color_combo.blockSignals(False)
             return
 
         segment = self.segments[row]
@@ -517,6 +536,11 @@ class WireBundleTaskPanel:
         self.radius_spin.blockSignals(True)
         self.radius_spin.setValue(float(segment.get("radius", 10.0) or 10.0))
         self.radius_spin.blockSignals(False)
+        self.wrap_color_combo.blockSignals(True)
+        self.wrap_color_combo.setCurrentText(
+            segment.get("wrap_color", "black")
+        )
+        self.wrap_color_combo.blockSignals(False)
 
     def _on_orientation_changed(self, value):
         row = self._current_row()
@@ -546,6 +570,18 @@ class WireBundleTaskPanel:
             segment.Radius = float(value)
             if segment.Document is not None:
                 segment.Document.recompute()
+
+    def _on_wrap_color_changed(self, value):
+        row = self._current_row()
+        if row is None:
+            return
+        entry = self.segments[row]
+        entry["wrap_color"] = value
+        segment = entry.get("object")
+        if segment is not None and segment.isValid():
+            WireBundleSegmentProxy._add_properties(segment)
+            segment.WrapColor = value
+            update_strap_colors_for_segment(segment)
 
     def _update_point_label(self, label, ref):
         label.setText(self._point_text(ref))
@@ -682,6 +718,8 @@ class WireBundleTaskPanel:
                     segment.Orientation = entry.get("orientation", 0.0)
                     segment.MaxCables = int(entry.get("max_cables", 0) or 0)
                     segment.SegmentType = entry.get("segment_type", "Closed")
+                    WireBundleSegmentProxy._add_properties(segment)
+                    segment.WrapColor = entry.get("wrap_color", "black")
                     update_segment_dependencies(segment)
                 else:
                     segment = create_bundle_segment(
@@ -693,6 +731,7 @@ class WireBundleTaskPanel:
                     )
                     segment.Orientation = entry.get("orientation", 0.0)
                     segment.MaxCables = int(entry.get("max_cables", 0) or 0)
+                    segment.WrapColor = entry.get("wrap_color", "black")
                     entry["object"] = segment
                 panel_objects.append(segment)
 
