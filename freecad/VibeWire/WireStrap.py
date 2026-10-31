@@ -548,11 +548,18 @@ class StrapBuilder:
         raise RuntimeError("strap sweep failed")
 
 
+_STRAP_CACHE = {}
+
+
 def build_strap(hull):
     """Build one combined strap+head solid from a local 2D convex hull."""
     points = [_vector(point) for point in hull]
     if len(points) < 3:
         raise ValueError("strap hull needs at least three points")
+    cache_key = hull_signature(points)
+    cached = _STRAP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     perimeter = polygon_perimeter(points)
     spec, row, equivalent_diameter = select_strap_spec(perimeter)
     builder = StrapBuilder(points, spec)
@@ -565,7 +572,18 @@ def build_strap(hull):
     if not shape.isValid() or not shape.Solids:
         raise ValueError("strap geometry could not be built")
     utilized_length = builder.strap_path_length + spec.head_length
-    return shape, builder, spec, row, equivalent_diameter, utilized_length
+    result = (
+        shape,
+        builder,
+        spec,
+        row,
+        equivalent_diameter,
+        utilized_length,
+    )
+    if len(_STRAP_CACHE) >= 128:
+        _STRAP_CACHE.pop(next(iter(_STRAP_CACHE)))
+    _STRAP_CACHE[cache_key] = result
+    return result
 
 
 _STRAP_SIGNATURE_PREFIX = (
@@ -582,6 +600,34 @@ def hull_signature(hull):
     )
     digest = hashlib.sha1(text.encode("ascii")).hexdigest()
     return _STRAP_SIGNATURE_PREFIX + ":" + digest
+
+
+def hull_for_segment(segment):
+    """Return the segment hull in its local side/normal 2D frame."""
+    start_obj = getattr(segment, "Start", None)
+    end_obj = getattr(segment, "End", None)
+    if start_obj is None or end_obj is None:
+        return None
+    if "HullCurve" not in segment.PropertiesList:
+        return None
+    hull_curve = segment.HullCurve
+    if hull_curve is None or hull_curve.isNull():
+        return None
+    start = start_obj.getGlobalPlacement().Base
+    side, normal = segment_basis(segment)
+    hull = []
+    for vertex in hull_curve.Vertexes:
+        point = vertex.Point - start
+        hull.append(
+            App.Vector(
+                point.dot(side),
+                point.dot(normal),
+                0.0,
+            )
+        )
+    if len(hull) < 3:
+        return None
+    return hull
 
 
 class WireStrapProxy:
@@ -642,6 +688,34 @@ class WireStrapProxy:
                 "Strap",
                 "Strap path length plus head length",
             )
+        if "StrapSlot" not in properties:
+            obj.addProperty(
+                "App::PropertyInteger",
+                "StrapSlot",
+                "Strap",
+                "Strap slot index within the segment",
+            )
+        if "StrapDistance" not in properties:
+            obj.addProperty(
+                "App::PropertyLength",
+                "StrapDistance",
+                "Strap",
+                "Distance from the far segment end",
+            )
+        if "StrapKind" not in properties:
+            obj.addProperty(
+                "App::PropertyString",
+                "StrapKind",
+                "Strap",
+                "Straight or curve placement",
+            )
+        if "JoinSegment" not in properties:
+            obj.addProperty(
+                "App::PropertyLink",
+                "JoinSegment",
+                "Strap",
+                "Larger segment joined by this strap run",
+            )
         if "StrapSignature" not in properties:
             obj.addProperty(
                 "App::PropertyString",
@@ -655,55 +729,22 @@ class WireStrapProxy:
                 pass
 
     @staticmethod
-    def _segment_inputs(segment):
-        start_obj = getattr(segment, "Start", None)
-        end_obj = getattr(segment, "End", None)
-        if start_obj is None or end_obj is None:
-            return None
-        if "HullCurve" not in segment.PropertiesList:
-            return None
-        hull_curve = segment.HullCurve
-        if hull_curve is None or hull_curve.isNull():
-            return None
-        start = start_obj.getGlobalPlacement().Base
-        end = end_obj.getGlobalPlacement().Base
-        direction = end - start
-        length = direction.Length
-        if length < 1e-9:
-            return None
-        direction = direction / length
-        side, normal = segment_basis(segment)
-        hull = []
-        for vertex in hull_curve.Vertexes:
-            point = vertex.Point - start
-            hull.append(
-                App.Vector(
-                    point.dot(side),
-                    point.dot(normal),
-                    0.0,
-                )
-            )
-        if len(hull) < 3:
-            return None
-        midpoint = start + direction * (length / 2.0)
-        rotation = App.Rotation(side, normal, direction, "XYZ")
-        return hull, App.Placement(midpoint, rotation)
+    def _hull_for_segment(segment):
+        return hull_for_segment(segment)
 
     def execute(self, obj):
         try:
-            inputs = self._segment_inputs(obj.Segment)
+            hull = self._hull_for_segment(obj.Segment)
         except Exception:
-            inputs = None
-        if inputs is None:
+            hull = None
+        if hull is None:
             obj.Shape = Part.Shape()
             return
-        hull, placement = inputs
         signature = hull_signature(hull)
         if (
             getattr(obj, "StrapSignature", "") == signature
             and not obj.Shape.isNull()
         ):
-            obj.Placement = placement
             return
         try:
             shape, builder, spec, _row, _diameter, utilized_length = build_strap(
@@ -713,7 +754,6 @@ class WireStrapProxy:
             obj.Shape = Part.Shape()
             return
         obj.Shape = shape
-        obj.Placement = placement
         obj.StrapWidth = spec.width
         obj.StrapThickness = spec.thickness
         obj.StrapLength = spec.length

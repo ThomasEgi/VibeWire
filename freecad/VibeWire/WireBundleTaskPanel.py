@@ -704,7 +704,6 @@ class WireBundleTaskPanel:
 
             ensure_segment_group(self.bundle)
             ensure_helper_group(self.bundle)
-            ensure_strap_objects(self.bundle)
             from .WireBendHelpers import rebuild_bend_helpers
 
             rebuild_bend_helpers(self.bundle)
@@ -713,6 +712,7 @@ class WireBundleTaskPanel:
             return
 
         document.recompute()
+        ensure_strap_objects(self.bundle)
         self._update_button_labels()
         helper_count = len(
             [

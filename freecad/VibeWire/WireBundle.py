@@ -7,7 +7,7 @@ import FreeCADGui as Gui
 import Part
 
 from .WireFrames import segment_basis
-from . import WireLayout, WireReducedDisplay, WireStrap
+from . import WireLayout, WireReducedDisplay, WireStrap, WireStrapLayout
 from .WireGeometry import circles_hull
 from .WireRoute import (
     build_route_graph,
@@ -466,16 +466,56 @@ class WireHarnessProxy:
 
     @staticmethod
     def _refresh_strap_objects(obj):
-        """Rebuild existing strap proxies after this pass has refreshed hulls."""
+        """Update existing straps from the current hulls without creating objects."""
         group = getattr(obj, "StrapGroup", None)
         if group is None or not group.isValid():
             return
+        if getattr(obj, "WrappingType", "None") != "Straps":
+            return
+        try:
+            placements = WireStrapLayout.plan_strap_placements(
+                obj,
+                _strap_cables(obj),
+            )
+        except Exception:
+            return
+        existing = {}
         for strap in list(group.Group):
-            proxy = getattr(strap, "Proxy", None)
-            if getattr(proxy, "Type", None) != WireStrap.WireStrapProxy.Type:
+            segment = getattr(strap, "Segment", None)
+            if segment is None:
                 continue
             try:
-                proxy.execute(strap)
+                slot = int(getattr(strap, "StrapSlot", 0) or 1)
+            except Exception:
+                slot = 1
+            existing[(segment, slot)] = strap
+        planned_keys = set()
+        refresh_needed = False
+        for placement in placements:
+            key = (placement.segment, placement.slot)
+            planned_keys.add(key)
+            strap = existing.get(key)
+            if strap is None:
+                refresh_needed = True
+                continue
+            strap.StrapDistance = placement.distance
+            strap.StrapKind = placement.kind
+            strap.JoinSegment = placement.join_segment
+            strap.Placement = placement.placement
+            try:
+                strap.Proxy.execute(strap)
+            except Exception:
+                pass
+        if set(existing) != planned_keys:
+            refresh_needed = True
+        if refresh_needed:
+            try:
+                from PySide import QtCore
+
+                QtCore.QTimer.singleShot(
+                    0,
+                    lambda: ensure_strap_objects(obj),
+                )
             except Exception:
                 pass
 
@@ -991,6 +1031,13 @@ def ensure_helper_group(harness):
     for segment in desired:
         if segment.Name not in current_names:
             group.addObject(segment)
+    if App.GuiUp:
+        try:
+            if not group.ViewObject.Visibility:
+                for child in group.Group:
+                    child.ViewObject.Visibility = False
+        except Exception:
+            pass
     return group
 
 
@@ -1030,8 +1077,31 @@ def _remove_strap_object(strap):
             pass
 
 
+def _strap_cables(harness):
+    return [
+        obj
+        for obj in getattr(harness, "InList", [])
+        if is_wire_cable(obj)
+    ]
+
+
+def _init_strap_view(strap, force_visible):
+    if not App.GuiUp:
+        return
+    try:
+        view = strap.ViewObject
+        if getattr(view, "Proxy", None) is None:
+            view.Proxy = 1
+        if getattr(view, "DisplayMode", None) is None:
+            view.DisplayMode = "Flat Lines"
+        if force_visible:
+            view.Visibility = True
+    except Exception:
+        pass
+
+
 def ensure_strap_objects(harness):
-    """Create/remove strap objects without touching the harness itself."""
+    """Create/remove planned strap objects without touching the harness itself."""
     group = ensure_strap_group(harness)
     if group is None:
         return []
@@ -1046,20 +1116,29 @@ def ensure_strap_objects(harness):
                 pass
         return []
 
-    segments = [
-        segment
-        for segment in harness.Segments
-        if is_bundle_segment(segment) and not is_lace_helper(segment)
-    ]
+    try:
+        placements = WireStrapLayout.plan_strap_placements(
+            harness,
+            _strap_cables(harness),
+        )
+    except Exception:
+        placements = []
+
     existing = {}
     for child in list(group.Group):
         segment = getattr(child, "Segment", None)
-        if segment is not None:
-            existing[segment] = child
+        if segment is None:
+            continue
+        try:
+            slot = int(getattr(child, "StrapSlot", 0) or 1)
+        except Exception:
+            slot = 1
+        existing[(segment, slot)] = child
 
     ordered = []
-    for segment in segments:
-        strap = existing.pop(segment, None)
+    for placement in placements:
+        key = (placement.segment, placement.slot)
+        strap = existing.pop(key, None)
         proxy = getattr(strap, "Proxy", None) if strap is not None else None
         needs_init = strap is not None and getattr(
             getattr(strap, "ViewObject", None), "Proxy", None
@@ -1085,18 +1164,23 @@ def ensure_strap_objects(harness):
                     strap.ViewObject.Transparency = 0
                 except Exception:
                     pass
-        strap.Segment = segment
-        strap.Label = "Strap %s" % segment.Label
-        if App.GuiUp and needs_init:
-            try:
-                view = strap.ViewObject
-                if getattr(view, "Proxy", None) is None:
-                    view.Proxy = 1
-                if getattr(view, "DisplayMode", None) is None:
-                    view.DisplayMode = "Flat Lines"
-                view.Visibility = True
-            except Exception:
-                pass
+        else:
+            WireStrap.WireStrapProxy._add_properties(strap)
+        strap.Segment = placement.segment
+        strap.StrapSlot = placement.slot
+        strap.StrapDistance = placement.distance
+        strap.StrapKind = placement.kind
+        strap.JoinSegment = placement.join_segment
+        strap.Placement = placement.placement
+        strap.Label = "Strap %s %02d" % (
+            placement.segment.Label,
+            placement.slot,
+        )
+        _init_strap_view(strap, needs_init)
+        try:
+            strap.Proxy.execute(strap)
+        except Exception:
+            pass
         ordered.append(strap)
 
     for strap in existing.values():

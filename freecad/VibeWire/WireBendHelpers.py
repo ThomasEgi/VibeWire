@@ -93,6 +93,10 @@ def _new_helper_node(document, harness, bend_index, helper_index, side, point):
         bend_index + 1, helper_index, side
     )
     obj.Placement.Base = point
+    try:
+        obj.ViewObject.Visibility = False
+    except Exception:
+        pass
     group = WireBundle.ensure_helper_group(harness)
     if group is not None:
         group.addObject(obj)
@@ -231,7 +235,7 @@ def rebuild_bend_helpers(
                     (0.0, 0.75, 0.0) if shared else (1.0, 0.0, 0.0)
                 )
                 helper.ViewObject.Transparency = 80
-                helper.ViewObject.Visibility = True
+                helper.ViewObject.Visibility = False
             except Exception:
                 pass
             new_order.append(helper)
